@@ -1,6 +1,7 @@
 import json
 
 import numpy as np
+import pytest
 from conftest import needs_ffmpeg
 
 from synthetic_neck.config import GeneratorConfig, apply_override
@@ -79,3 +80,30 @@ def test_generate_dataset_parallel_jobs(tmp_path):
     assert meta1["seed"] == 201 and meta2["seed"] == 202
     idx = json.loads((tmp_path / "dataset.json").read_text())
     assert idx["failed"] == []
+
+
+@needs_ffmpeg
+def test_visibility_guarantee_redraws_until_pulse_is_testable(tmp_path, monkeypatch):
+    import synthetic_neck.generate as gen
+    calls = []
+    real = gen.cardiac_snr
+
+    def fake(series, fps, hr_hz):
+        calls.append(1)
+        return 1.0 if len(calls) <= 2 else real(series, fps, hr_hz)   # first attempt: artery and vein fail
+
+    monkeypatch.setattr(gen, "cardiac_snr", fake)
+    meta = gen.generate_sample(_small(), seed=7, out_dir=tmp_path / "1")
+    assert meta["visibility"]["attempts"] == 2
+    assert meta["visibility"]["artery_snr"] >= 10 and meta["visibility"]["vein_snr"] >= 10
+    first = gen.sample(_small(), gen._attempt_rng(7, 0))
+    assert meta["params"]["trace"]["heart_rate_bpm"] != first.trace.heart_rate_bpm
+
+
+@needs_ffmpeg
+def test_visibility_guarantee_gives_up_after_max_attempts(tmp_path, monkeypatch):
+    import synthetic_neck.generate as gen
+    monkeypatch.setattr(gen, "cardiac_snr", lambda series, fps, hr_hz: 0.0)
+    monkeypatch.setattr(gen, "MAX_VISIBILITY_ATTEMPTS", 2)
+    with pytest.raises(RuntimeError, match="no draw reached"):
+        gen.generate_sample(_small(), seed=7, out_dir=tmp_path / "1")
