@@ -21,19 +21,34 @@ class ConfigError(ValueError):
 
 # --------------------------------------------------------------------------- distributions
 
+_KNOT_LEVELS = (0.05, 0.25, 0.50, 0.75, 0.95)
+
+
 @dataclass(frozen=True)
 class Range:
     lo: float
     hi: float
+    knots: tuple[float, ...] | None = None   # p05, p25, p50, p75, p95: draw by inverse-CDF interpolation
 
     def __post_init__(self):
         object.__setattr__(self, "lo", float(self.lo))
         object.__setattr__(self, "hi", float(self.hi))
         if self.lo > self.hi:
             raise ConfigError(f"Range lo {self.lo} > hi {self.hi}")
+        if self.knots is not None:
+            k = tuple(float(x) for x in self.knots)
+            if (len(k) != len(_KNOT_LEVELS) or any(b < a for a, b in zip(k, k[1:]))
+                    or k[0] != self.lo or k[-1] != self.hi):
+                raise ConfigError("Range knots must be 5 non-decreasing quantiles running from lo to hi")
+            object.__setattr__(self, "knots", k)
 
     def draw(self, rng: np.random.Generator) -> float:
-        return self.lo if self.lo == self.hi else float(rng.uniform(self.lo, self.hi))
+        if self.lo == self.hi:
+            return self.lo
+        if self.knots is None:
+            return float(rng.uniform(self.lo, self.hi))
+        q = float(rng.uniform(_KNOT_LEVELS[0], _KNOT_LEVELS[-1]))
+        return float(np.interp(q, _KNOT_LEVELS, self.knots))
 
 
 @dataclass(frozen=True)
@@ -422,6 +437,11 @@ def validate(config: GeneratorConfig) -> None:
         raise ConfigError("geometry.vein_visible_fraction lower bound must be >= 0.1 so the vein always pulses")
     if not 0.0 <= config.streams.depth_ir_probability <= 1.0:
         raise ConfigError("streams.depth_ir_probability must be in [0, 1]")
+    if v.fps < 20:
+        raise ConfigError("video.fps must be >= 20: the cardiac SNR noise band is 5-9 Hz")
+    if c.distance_mm.hi > 1250:
+        raise ConfigError("camera.distance_mm upper bound exceeds the depth sensor's range: 16-bit depth at "
+                          "0.02 mm resolution stops at 1310 mm")
     if config.appearance.monk_tone is not None and config.appearance.skin_rgb_by_monk is None:
         raise ConfigError("appearance.monk_tone needs appearance.skin_rgb_by_monk")
     # Both vessel axes (frame centre +/- half the separation, plus centre jitter) must lie inside the
@@ -492,7 +512,12 @@ def apply_override(config: GeneratorConfig, key: str, text: str) -> GeneratorCon
 # --------------------------------------------------------------------------- serialisation
 
 def _to_jsonable(obj):
-    if isinstance(obj, (Range, IntRange)):
+    if isinstance(obj, Range):
+        d = {"lo": obj.lo, "hi": obj.hi}
+        if obj.knots is not None:
+            d["knots"] = list(obj.knots)
+        return d
+    if isinstance(obj, IntRange):
         return {"lo": obj.lo, "hi": obj.hi}
     if isinstance(obj, Choice):
         return {"values": list(obj.values), "weights": None if obj.weights is None else list(obj.weights)}
@@ -520,7 +545,7 @@ def _from_jsonable(hint, value):
     if origin is typing.Union or origin is types.UnionType:
         return _from_jsonable([a for a in args if a is not type(None)][0], value)
     if hint is Range:
-        return Range(value["lo"], value["hi"])
+        return Range(value["lo"], value["hi"], None if value.get("knots") is None else tuple(value["knots"]))
     if hint is IntRange:
         return IntRange(value["lo"], value["hi"])
     if hint is Choice:

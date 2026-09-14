@@ -15,7 +15,7 @@ from pathlib import Path
 import numpy as np
 
 from . import __version__
-from .config import (AppearanceConfig, Choice, GeneratorConfig, GeometryConfig, IlluminationConfig,
+from .config import (AppearanceConfig, CameraConfig, Choice, GeneratorConfig, GeometryConfig, IlluminationConfig,
                      PulseConfig, Range, SensorConfig, StreamsConfig, TraceConfig, validate)
 from .render.camera import gaussian_blur
 from .traces import CVP_AMPLITUDE_FIELDS, CVP_WAVES
@@ -48,13 +48,15 @@ def _num(s: str) -> float | None:
         return None
 
 
-def _range(q: dict, lo_key="p05", hi_key="p95", floor=None, ceil=None) -> Range:
-    lo, hi = q[lo_key], q[hi_key]
+def _range(q: dict, floor: float | None = None, ceil: float | None = None, scale: float = 1.0) -> Range:
+    """A quantile prior as a Range drawn by inverse-CDF interpolation through p05..p95 (after scaling and clamping)."""
+    knots = np.array([q[k] for k in QUANTILES], dtype=np.float64) * scale
     if floor is not None:
-        lo, hi = max(lo, floor), max(hi, floor)
+        knots = np.maximum(knots, floor)
     if ceil is not None:
-        lo, hi = min(lo, ceil), min(hi, ceil)
-    return Range(lo, hi)
+        knots = np.minimum(knots, ceil)
+    knots = np.maximum.accumulate(knots)
+    return Range(float(knots[0]), float(knots[-1]), tuple(float(x) for x in knots))
 
 
 # --------------------------------------------------------------------------- population
@@ -163,6 +165,9 @@ def waveform_priors_for_recording(trace_csv: Path) -> dict:
     peaks = detect_r_peaks(ecg, fs)
     rr = np.diff(peaks) / fs
     rr = rr[(rr > 0.3) & (rr < 2.0)]
+    if len(rr):
+        med = float(np.median(rr))
+        rr = rr[(rr > 0.6 * med) & (rr < 1.6 * med)]   # drop missed (~2x) and spurious (~0.5x) beats
     if len(rr) < 3:
         raise ValueError(f"too few beats detected in {trace_csv}")
 
@@ -273,16 +278,20 @@ def appearance_priors_for_recording(rec_dir: Path, n_frames: int = 10, start_s: 
     return out
 
 
+MIN_RECORDINGS_PER_MONK = 3
+
+
 def appearance_priors(per_recording: list[dict], monk_by_index: list[int | None]) -> dict:
     lum = lambda rgb: 0.299 * rgb[0] + 0.587 * rgb[1] + 0.114 * rgb[2]
     by_monk: dict[int, list] = {}
     for rec, m in zip(per_recording, monk_by_index):
         if m is not None:
             by_monk.setdefault(m, []).append(rec["skin_rgb"])
-    skin_by_monk = {str(m): [float(x) for x in np.mean(v, axis=0)] for m, v in sorted(by_monk.items())}
+    skin_by_monk = {str(m): [float(x) for x in np.mean(v, axis=0)]
+                    for m, v in sorted(by_monk.items()) if len(v) >= MIN_RECORDINGS_PER_MONK}
     ambient = []
     for rec, m in zip(per_recording, monk_by_index):
-        if m is not None:
+        if m is not None and str(m) in skin_by_monk:
             ambient.append(lum(rec["skin_rgb"]) / lum(skin_by_monk[str(m)]))
     out = {
         "skin_rgb_by_monk": skin_by_monk,
@@ -342,13 +351,17 @@ def run_calibration(root: Path, out: Path, n_recordings: int = 30, seed: int = 0
 # --------------------------------------------------------------------------- priors -> config
 
 def config_from_priors(path: Path) -> GeneratorConfig:
-    """The `neckflix` preset: p05-p95 of every measured prior mapped onto Ranges."""
+    """The `neckflix` preset: every measured prior mapped onto a Range that follows its measured quantiles."""
     from .presets import MONK_SKIN_RGB   # local import: presets imports this module lazily too
 
     d = json.loads(Path(path).read_text())
     if d.get("schema_version") != PRIORS_SCHEMA_VERSION:
         raise ValueError(f"{path}: schema_version {d.get('schema_version')} != {PRIORS_SCHEMA_VERSION}")
     pop, wf, ap = d["population"], d["waveform"], d["appearance"]
+    # Noise is measured per native sensor pixel (650 px crops); each output pixel averages
+    # crop_ratio^2 native pixels, so per-pixel sd shrinks by crop_ratio and shot-noise variance
+    # gain by crop_ratio^2.
+    ratio = CameraConfig().crop_ratio
 
     posture = pop["posture_deg"]
     monk = pop["monk_tone"]
@@ -384,9 +397,10 @@ def config_from_priors(path: Path) -> GeneratorConfig:
             drift_sd=Range(0.0, 0.02), drift_tau_s=Range(10, 60),
             flicker_amp=Range(0.0, 0.005), specular_amp=Range(0.0, 20.0)),
         sensor=SensorConfig(
-            read_noise_sd=_range(ap["read_noise_sd"], floor=0.5, ceil=6.0),
-            shot_noise_gain=_range(ap["shot_noise_gain"], floor=0.0, ceil=0.1),
-            ir_read_noise_sd=_range(ap["ir_read_noise_sd"], floor=0.5, ceil=8.0) if "ir_read_noise_sd" in ap else Range(2, 2),
+            read_noise_sd=_range(ap["read_noise_sd"], floor=0.5, ceil=6.0, scale=1 / ratio),
+            shot_noise_gain=_range(ap["shot_noise_gain"], floor=0.0, ceil=0.1, scale=1 / ratio**2),
+            ir_read_noise_sd=(_range(ap["ir_read_noise_sd"], floor=0.5, ceil=8.0, scale=1 / ratio)
+                              if "ir_read_noise_sd" in ap else Range(2, 2)),
             blur_sigma_px=Range(0.5, 1.5)),
     )
     validate(cfg)

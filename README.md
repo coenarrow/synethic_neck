@@ -9,7 +9,7 @@ jugular (venous) pulsation, with full ground truth. Three presets:
 | `benchmark` | signal-processing benchmarks with controlled degradation | 2–5 levels |
 | `neckflix` | ranges calibrated from the Neckflix ICU dataset | 0.5–2 levels |
 
-Every sample is guaranteed a testable pulse. While rendering, the generator measures the green channel's vessel-averaged cardiac signal-to-noise ratio for the artery and for the vein. It redraws the sample's settings, up to 20 times, until both reach at least 10. The infrared stream is not guaranteed to show a pulse. Each sample's `metadata.json` records the outcome under `visibility`.
+Every sample is guaranteed a testable pulse. While rendering, the generator measures the green channel's vessel-averaged cardiac signal-to-noise ratio for the artery and for the vein. It tries up to 20 draws of the sample's settings until both reach at least 10. The infrared stream is not guaranteed to show a pulse. Each sample's `metadata.json` records the outcome under `visibility`.
 
 ## Install
 
@@ -44,6 +44,7 @@ rate relative to background.
 
 Writes aggregated quantiles and histograms only (no IDs, no pixels). The
 checked-in `priors/neckflix.json` is what `--preset neckflix` reads.
+The preset reads it from the repository's priors/ directory, so run the tool from a source checkout.
 
 ## Develop
 

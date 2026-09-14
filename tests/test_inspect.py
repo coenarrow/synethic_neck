@@ -15,7 +15,7 @@ def test_fft_maps_localise_vessels_for_each_preset(tmp_path, name):
         from synthetic_neck.presets import DEFAULT_PRIORS
         if not DEFAULT_PRIORS.exists():
             pytest.skip("priors/neckflix.json not generated yet (Task 16)")
-    # neckflix amplitudes are near the noise floor, so give it more pixels per vessel.
+    # neckflix renders at 96 px.
     cfg = apply_override(get_preset(name), "video.frame_size", "96" if name == "neckflix" else "64")
     generate_sample(cfg, seed=11, out_dir=tmp_path / "1", preset=name)
     power, phase, f_hz = fft_maps(tmp_path / "1")
@@ -29,6 +29,8 @@ def test_fft_maps_localise_vessels_for_each_preset(tmp_path, name):
     if name == "lesson":
         assert ratios["Depth (mm)"][0] > 1.2
     # Detectability: each vessel's averaged cardiac signal (HR, 2xHR, 3xHR) is at least 10x its own noise floor.
+    # For neckflix, generate_sample already enforces G SNR >= 10 with this same measure; the phase check
+    # below is the independent assertion.
     detect = ("G",) + (("IR",) if "IR" in snr and name != "neckflix" else ())
     for ch in detect:
         assert snr[ch][0] >= 10, (ch, snr[ch])

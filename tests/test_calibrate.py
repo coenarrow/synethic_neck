@@ -6,8 +6,8 @@ import pytest
 from conftest import needs_ffmpeg
 
 from synthetic_neck.calibrate import (
-    config_from_priors, detect_r_peaks, histogram, population_priors, quantiles, run_calibration,
-    skin_mask, waveform_priors_for_recording,
+    appearance_priors, config_from_priors, detect_r_peaks, histogram, population_priors, quantiles,
+    run_calibration, skin_mask, waveform_priors_for_recording,
 )
 from synthetic_neck.config import TraceParams, validate
 from synthetic_neck.traces import generate_trace
@@ -125,7 +125,7 @@ def test_run_calibration_writes_schema_and_neckflix_config_validates(tmp_path):
     assert set(d) == {"schema_version", "provenance", "population", "waveform", "appearance"}
     assert d["provenance"]["n_recordings"] == 3 and "Recording_Directory" not in json.dumps(d)
     assert "P001" not in json.dumps(d)
-    assert 150 < d["appearance"]["skin_rgb_by_monk"]["4"][0] < 200
+    assert d["appearance"]["skin_rgb_by_monk"] == {}
     assert 0.5 < d["appearance"]["read_noise_sd"]["p50"] < 4.0
     cfg = config_from_priors(out)
     validate(cfg)
@@ -133,6 +133,23 @@ def test_run_calibration_writes_schema_and_neckflix_config_validates(tmp_path):
     assert cfg.geometry.vein_visible_fraction.lo == 0.4
     assert cfg.appearance.monk_tone is not None and len(cfg.appearance.skin_rgb_by_monk) == 10
     assert cfg.streams.depth_ir_probability == pytest.approx(2 / 3)
+    assert cfg.sensor.read_noise_sd.knots is not None
+    assert cfg.sensor.read_noise_sd.hi <= 6.0
+
+
+@needs_ffmpeg
+def test_config_from_priors_scales_noise_to_output_pixels(tmp_path):
+    _write_stand_in_root(tmp_path)
+    out = tmp_path / "priors.json"
+    run_calibration(tmp_path, out, n_recordings=3, seed=0)
+    d = json.loads(out.read_text())
+    d["appearance"]["read_noise_sd"] = {"p05": 2.17, "p25": 4.34, "p50": 6.51, "p75": 8.68, "p95": 10.85}
+    out.write_text(json.dumps(d))
+    cfg = config_from_priors(out)
+    knots = cfg.sensor.read_noise_sd.knots
+    assert knots is not None
+    for actual, expected in zip(knots, (1.0, 2.0, 3.0, 4.0, 5.0)):
+        assert abs(actual - expected) < 0.02
 
 
 def _write_trace(path, columns):
@@ -185,3 +202,29 @@ def test_run_calibration_skips_unusable_recordings(tmp_path):
     bad.write_text("\n".join(lines[:1001]) + "\n")        # 0.5 s of signal: too few beats
     priors = run_calibration(tmp_path, tmp_path / "priors.json", n_recordings=3, seed=0)
     assert priors["provenance"]["n_recordings"] == 2 and priors["provenance"]["n_skipped"] == 1
+
+
+def test_waveform_priors_ignore_missed_beats(tmp_path):
+    hr = 70
+    fs = 2000.0
+    p = TraceParams(duration_s=20.0, sample_rate_hz=fs, heart_rate_bpm=hr, hr_variability=0.0, cvp_mean_mmhg=8.0,
+                    cvp_noise_mmhg=0.15, resp_cvp_swing_mmhg=1.5, seed=3)
+    tr = generate_trace(p)
+    t, cvp = tr[:, 0], tr[:, 2]
+    onsets = list(np.arange(-2.0, 22.0, 60.0 / hr))
+    del onsets[10]        # a missed 11th beat: the ECG detector sees one ~2x-length RR interval
+    ecg = sum(1000.0 * np.exp(-0.5 * ((t - r0) / 0.01) ** 2) for r0 in onsets)
+    path = tmp_path / "trace_data.csv"
+    _write_trace(path, {"Time (s)": t, "CVP (mmHg)": cvp, "ECG (mV)": ecg})
+    w = waveform_priors_for_recording(path)
+    assert w["hr_variability"] < 0.02
+    assert abs(w["heart_rate_bpm"] - 70) < 1
+
+
+def test_appearance_priors_require_three_recordings_per_monk_cell():
+    rec = lambda rgb: {"skin_rgb": list(rgb), "skin_fraction": 0.2, "texture_sd": 3.0,
+                       "read_noise_sd": 2.0, "shot_noise_gain": 0.0}
+    recs = [rec((180, 130, 100)), rec((170, 120, 90)), rec((190, 140, 110)), rec((100, 70, 50))]
+    out = appearance_priors(recs, [4, 4, 4, 6])
+    assert set(out["skin_rgb_by_monk"]) == {"4"}
+    assert out["skin_rgb_by_monk"]["4"] == [180.0, 130.0, 100.0]

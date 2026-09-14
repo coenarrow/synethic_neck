@@ -1,4 +1,5 @@
 import json
+from dataclasses import replace
 
 import numpy as np
 import pytest
@@ -68,6 +69,10 @@ def test_validation_rejects_bad_configs():
     cfg = apply_override(GeneratorConfig(), "geometry.separation_mm", "400,400")
     with pytest.raises(ConfigError, match="fit"):
         validate(cfg)
+    with pytest.raises(ConfigError, match="fps"):
+        validate(apply_override(GeneratorConfig(), "video.fps", "10"))
+    with pytest.raises(ConfigError, match="depth"):
+        validate(apply_override(GeneratorConfig(), "camera.distance_mm", "500,1400"))
 
 
 def test_json_round_trip():
@@ -75,6 +80,29 @@ def test_json_round_trip():
     d = config_to_dict(cfg)
     assert json.loads(json.dumps(d)) == d
     assert config_from_dict(d) == cfg
+
+
+def test_knotted_range_follows_quantiles():
+    r = Range(0.0, 10.0, (0.0, 1.0, 2.0, 3.0, 10.0))
+    rng = np.random.default_rng(0)
+    draws = np.array([r.draw(rng) for _ in range(4000)])
+    assert abs(np.median(draws) - 2.0) < 0.1
+    share = float(np.mean(draws > 3.0))
+    assert 0.18 <= share <= 0.26
+    with pytest.raises(ConfigError):
+        Range(0.0, 1.0, (0.0, 0.5, 0.4, 0.8, 1.0))
+
+
+def test_knotted_range_json_round_trip():
+    cfg = apply_override(GeneratorConfig(), "illumination.flicker_amp", "0.01,0.02")
+    cfg = replace(cfg, sensor=replace(cfg.sensor, read_noise_sd=Range(1.0, 5.0, (1.0, 2.0, 3.0, 4.0, 5.0))))
+    d = config_to_dict(cfg)
+    assert json.loads(json.dumps(d)) == d
+    assert config_from_dict(d) == cfg
+
+
+def test_plain_range_stream_unchanged():
+    assert Range(2.0, 3.0).draw(np.random.default_rng(5)) == float(np.random.default_rng(5).uniform(2.0, 3.0))
 
 
 def test_vein_visible_fraction():
