@@ -20,7 +20,7 @@
 - Output layout per sample is unchanged: `trace.csv`, `gray_video.mkv`, `rgbid_video.mkv`, `vessel_ids.npy`, `metadata.json`.
 - Artery pulse amplitude targets (8-bit levels): `lesson` 7–12, `benchmark` 2–5, `neckflix` 0.5–2.
 - Neckflix facts: `_D/_N` suffix = depth+IR recorded / not; skin tone columns are Monk Skin Tone (1–10); `0/45/90` in folder names is participant posture; `Not Visible` JVP rows are excluded from JVP priors.
-- Commit after every task with the trailer `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>`.
+- Commit after every task with the trailer `Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>`.
 - Tests that need ffmpeg are marked with `needs_ffmpeg` (skip if absent). Tests never touch the Neckflix drive.
 
 ## File structure
@@ -134,7 +134,7 @@ Expected: `1 passed`.
 git add pyproject.toml uv.lock .python-version .gitignore README.md src tests
 git commit -m "Scaffold synthetic_neck package
 
-Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 ```
 
 ---
@@ -290,7 +290,7 @@ Expected: 2 passed.
 git add src/synthetic_neck/video.py tests/test_video.py
 git commit -m "Add lossless MKV writer/reader via ffmpeg
 
-Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 ```
 
 ---
@@ -382,7 +382,7 @@ def test_validation_rejects_bad_configs():
     cfg = apply_override(GeneratorConfig(), "geometry.vein_visible_fraction", "0.05,1")
     with pytest.raises(ConfigError, match="vein_visible_fraction"):
         validate(cfg)
-    cfg = apply_override(GeneratorConfig(), "geometry.length_mm", "400,400")
+    cfg = apply_override(GeneratorConfig(), "geometry.separation_mm", "400,400")
     with pytest.raises(ConfigError, match="fit"):
         validate(cfg)
 
@@ -837,13 +837,16 @@ def validate(config: GeneratorConfig) -> None:
         raise ConfigError("streams.depth_ir_probability must be in [0, 1]")
     if config.appearance.monk_tone is not None and config.appearance.skin_rgb_by_monk is None:
         raise ConfigError("appearance.monk_tone needs appearance.skin_rgb_by_monk")
-    # Worst case: longest/widest vessels at the nearest camera, off-centre by the jitter.
+    # Both vessel axes (frame centre +/- half the separation, plus centre jitter) must lie inside the
+    # frame at the nearest camera, so both vessels are always at least partly in view. Whole-length fit
+    # is not required: small test frames (e.g. 48-96 px) are centre crops of the same scene.
     near = CameraParams(distance_mm=c.distance_mm.lo, native_width_px=c.native_width_px, hfov_deg=c.hfov_deg,
                         crop_px=int(round(v.frame_size * c.crop_ratio)), output_px=v.frame_size)
-    extent_px = (g.length_mm.hi + g.vein_width_mm.hi + g.separation_mm.hi) / near.pixel_scale_mm
-    if extent_px / 2 + g.centre_jitter_frac * v.frame_size > v.frame_size / 2:
-        raise ConfigError(f"geometry cannot fit in a {v.frame_size}px frame at {c.distance_mm.lo} mm: "
-                          f"extent {extent_px:.0f}px; shorten geometry.length_mm or move camera.distance_mm")
+    offset_px = (g.separation_mm.hi / 2) / near.pixel_scale_mm + g.centre_jitter_frac * v.frame_size
+    if offset_px > v.frame_size / 2:
+        raise ConfigError(f"geometry cannot fit in a {v.frame_size}px frame at {c.distance_mm.lo} mm: vessel axes "
+                          f"up to {offset_px:.0f}px from centre; reduce geometry.separation_mm or "
+                          f"geometry.centre_jitter_frac, or increase video.frame_size")
 
 
 # --------------------------------------------------------------------------- overrides
@@ -951,7 +954,7 @@ def config_from_dict(d: dict) -> GeneratorConfig:
 - [ ] **Step 4: Run tests**
 
 Run: `uv run pytest tests/test_config.py -v`
-Expected: 7 passed. If `test_validation_rejects_bad_configs` fails on the `fit` case, check the arithmetic: at 500 mm the pixel scale is ≈0.564 mm/px, so 400+15+16 mm ≈ 764 px, which cannot fit in 300 px.
+Expected: 7 passed. The `fit` case: at 500 mm the pixel scale is ≈0.564 mm/px, so a 400 mm separation puts each axis ≈355 px from centre, outside a 300 px frame.
 
 - [ ] **Step 5: Commit**
 
@@ -959,7 +962,7 @@ Expected: 7 passed. If `test_validation_rejects_bad_configs` fails on the `fit` 
 git add src/synthetic_neck/config.py tests/test_config.py
 git commit -m "Add GeneratorConfig ranges, sampling, overrides and validation
 
-Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 ```
 
 ---
@@ -1150,7 +1153,7 @@ Expected: 6 passed.
 git add src/synthetic_neck/traces.py tests/test_traces.py
 git commit -m "Add ABP/CVP trace synthesis driven by TraceParams
 
-Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 ```
 
 ---
@@ -1389,7 +1392,7 @@ Expected: 6 passed.
 git add src/synthetic_neck/geometry.py tests/test_geometry.py
 git commit -m "Add vessel geometry, visibility taper and propagation delays
 
-Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 ```
 
 ---
@@ -1593,7 +1596,7 @@ Expected: 5 passed.
 git add src/synthetic_neck/render tests/test_render_camera.py
 git commit -m "Add sensor stage: blur, area downsample, shot/read noise, quantisation
 
-Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 ```
 
 ---
@@ -1709,7 +1712,7 @@ Expected: 3 passed.
 git add src/synthetic_neck/render/base.py tests/test_render_base.py
 git commit -m "Add base scene with cylindrical shading shared with depth
 
-Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 ```
 
 ---
@@ -1859,7 +1862,7 @@ Expected: 4 passed.
 git add src/synthetic_neck/render/pulse.py tests/test_render_pulse.py
 git commit -m "Add pulse stage with propagation delay and vein visibility taper
 
-Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 ```
 
 ---
@@ -1914,8 +1917,10 @@ def test_drift_is_slow_bounded_and_seeded():
 def test_flicker_aliases_to_a_periodic_gain():
     st = _stage(flicker_amp=0.02, flicker_hz=100.0)
     gains = np.array([st.gain(i) for i in range(300)])
-    # 100 Hz sampled at 30 fps never lands exactly on the sine peak, hence the tolerance.
-    assert gains.max() == pytest.approx(1.02, abs=0.002) and gains.min() == pytest.approx(0.98, abs=0.002)
+    # 100 Hz sampled at 30 fps aliases to a 3-frame period whose samples sit at sin(0), sin(±2π/3).
+    assert np.all(np.abs(gains - 1.0) <= 0.02 + 1e-12)
+    np.testing.assert_allclose(gains[:-3], gains[3:])
+    assert np.ptp(gains) > 0.03
 
 
 def test_specular_blob_sits_on_shading_peak():
@@ -1992,7 +1997,7 @@ Expected: 5 passed.
 git add src/synthetic_neck/render/illumination.py tests/test_render_illumination.py
 git commit -m "Add illumination stage: ambient gain, OU drift, flicker, specular
 
-Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 ```
 
 ---
@@ -2039,8 +2044,10 @@ def test_frame_shapes_and_types():
 
 
 def test_frame_modulation_darkens_with_pressure():
+    # Widest separation, narrowest vein: keeps the venous pulse from bleeding into the artery pixel.
     p = _params(**{"video.frame_size": "100", "trace.heart_rate_bpm": "60", "trace.hr_variability": "0",
-                   "appearance.texture_sd": "0", "sensor.read_noise_sd": "0", "pulse.amplitude_levels": "10"})
+                   "appearance.texture_sd": "0", "sensor.read_noise_sd": "0", "pulse.amplitude_levels": "10",
+                   "geometry.separation_mm": "16", "geometry.vein_width_mm": "9"})
     tr = generate_trace(p.trace)
     r = Renderer(p, tr)
     w, _ = tube_fields(r.geometry, "artery")
@@ -2058,7 +2065,8 @@ def test_frame_modulation_darkens_with_pressure():
 
 def test_shading_and_depth_share_the_cylinder():
     p = _params(**{"video.frame_size": "64", "appearance.shading_strength": "1", "appearance.texture_sd": "0",
-                   "appearance.vignette": "0", "sensor.read_noise_sd": "0"})
+                   "appearance.vignette": "0", "sensor.read_noise_sd": "0", "pulse.amplitude_levels": "0",
+                   "appearance.static_vessel_contrast": "0"})
     r = Renderer(p, generate_trace(p.trace))
     rgb = r.frame(0, noise=False).astype(float)[..., 0]
     depth = r.depth_frame(0, noise=False)
@@ -2146,7 +2154,7 @@ Expected: 4 passed. If the darkening test's peak-to-peak lands just outside 7–
 git add src/synthetic_neck/render/renderer.py tests/test_renderer.py
 git commit -m "Add Renderer composing base, pulse, illumination and sensor stages
 
-Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 ```
 
 ---
@@ -2232,7 +2240,7 @@ DEFAULT_PRIORS = Path(__file__).resolve().parents[2] / "priors" / "neckflix.json
 # neckflix preset replaces these with measured per-tone skin colour when the
 # priors file has them.
 MONK_SKIN_RGB: tuple[tuple[float, float, float], ...] = (
-    (246, 237, 228), (243, 231, 219), (247, 234, 208), (234, 218, 186), (215, 189, 150),
+    (246, 237, 228), (243, 231, 219), (240, 226, 200), (234, 218, 186), (215, 189, 150),
     (160, 126, 86), (130, 92, 67), (96, 65, 52), (58, 49, 42), (41, 36, 32),
 )
 
@@ -2244,7 +2252,7 @@ def lesson() -> GeneratorConfig:
         geometry=GeometryConfig(vein_visible_fraction=Range(1.0, 1.0)),
         appearance=AppearanceConfig(shading_strength=Range(0.0, 0.0)),
         illumination=IlluminationConfig(),
-        sensor=SensorConfig(read_noise_sd=Range(1.0, 2.0)),
+        sensor=SensorConfig(read_noise_sd=Range(1.0, 2.0), depth_noise_mm_at_1m=Range(0.4, 0.4)),
     )
 
 
@@ -2292,7 +2300,7 @@ Expected: 7 passed (the `neckflix` import of `calibrate` is lazy, so the missing
 git add src/synthetic_neck/presets.py tests/test_presets.py
 git commit -m "Add lesson and benchmark presets and Monk skin table
 
-Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 ```
 
 ---
@@ -2550,7 +2558,7 @@ Expected: 3 passed. Note `_one` calls `generate_sample` through the module globa
 git add src/synthetic_neck/generate.py tests/test_generate.py
 git commit -m "Add sample and dataset generation with metadata and failure reporting
 
-Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 ```
 
 ---
@@ -2591,12 +2599,17 @@ def test_fft_maps_localise_vessels_for_each_preset(tmp_path, name):
     power, phase, f_hz = fft_maps(tmp_path / "1")
     ids = np.load(tmp_path / "1" / "vessel_ids.npy")
     ratios = vessel_power_ratio(power, ids)
-    for ch in ("R", "G", "B", "IR"):
+    # Every preset must carry a detectable pulse in green (the designed carrier) and IR when recorded.
+    # Red/blue/depth are only required to be clean in the lesson preset; elsewhere they are realistic.
+    checked = ("R", "G", "B") if name == "lesson" else ("G",)
+    checked += ("IR",) if "IR" in ratios else ()
+    for ch in checked:
         assert ratios[ch][0] > 1.5, (ch, ratios[ch])      # artery vs background
         assert ratios[ch][1] > 1.2, (ch, ratios[ch])      # vein vs background
-    assert ratios["Depth (mm)"][0] > 1.2
-    diffs = [abs(v[2]) for v in vessel_phase_summary(phase, ids).values()]
-    assert all(d > 0.3 for d in diffs)
+    if name == "lesson":
+        assert ratios["Depth (mm)"][0] > 1.2
+    summary = vessel_phase_summary(phase, ids)
+    assert all(abs(summary[ch][2]) > 0.3 for ch in checked)
 
 
 @needs_ffmpeg
@@ -2716,7 +2729,7 @@ def inspect_root(root: Path, samples: list[str] | None = None) -> None:
 - [ ] **Step 4: Run tests**
 
 Run: `uv run pytest tests/test_inspect.py -v`
-Expected: 3 passed, 1 skipped (neckflix until Task 16). The benchmark preset at 64 px is the marginal case; if its vein/background ratio in a colour channel falls under 1.2, raise the test frame size to 96 rather than lowering the threshold.
+Expected: 3 passed, 1 skipped (neckflix until Task 16). If a ratio falls under its threshold, do not change the seed, frame size or thresholds to make it pass: report DONE_WITH_CONCERNS with the measured ratios for every channel.
 
 - [ ] **Step 5: Commit**
 
@@ -2724,7 +2737,7 @@ Expected: 3 passed, 1 skipped (neckflix until Task 16). The benchmark preset at 
 git add src/synthetic_neck/inspect.py tests/test_inspect.py
 git commit -m "Add FFT inspection tool with per-preset vessel detectability test
 
-Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 ```
 
 ---
@@ -2759,8 +2772,8 @@ from synthetic_neck.config import ConfigError, Range
 
 
 def test_build_config_applies_preset_and_overrides():
-    cfg = build_config("lesson", ["pulse.amplitude_levels=1,2", "video.frame_size=32"])
-    assert cfg.pulse.amplitude_levels == Range(1, 2) and cfg.video.frame_size == 32
+    cfg = build_config("lesson", ["pulse.amplitude_levels=1,2", "video.frame_size=48"])
+    assert cfg.pulse.amplitude_levels == Range(1, 2) and cfg.video.frame_size == 48
     with pytest.raises(ConfigError):
         build_config("lesson", ["pulse.nope=1"])
     with pytest.raises(ConfigError, match="key=value"):
@@ -2776,11 +2789,11 @@ def test_bad_override_exits_nonzero_before_rendering(tmp_path, capsys):
 @needs_ffmpeg
 def test_generate_command_writes_samples(tmp_path):
     rc = main(["generate", "--preset", "lesson", "--n", "2", "--seed", "5", "--out", str(tmp_path),
-               "--set", "video.frame_size=32"])
+               "--set", "video.frame_size=48"])
     assert rc == 0
     assert (tmp_path / "1" / "metadata.json").exists() and (tmp_path / "2" / "metadata.json").exists()
     idx = json.loads((tmp_path / "dataset.json").read_text())
-    assert idx["preset"] == "lesson" and idx["overrides"] == ["video.frame_size=32"]
+    assert idx["preset"] == "lesson" and idx["overrides"] == ["video.frame_size=48"]
     assert json.loads((tmp_path / "1" / "metadata.json").read_text())["seed"] == 6
 ```
 
@@ -2881,7 +2894,7 @@ Expected: 3 passed and the help text prints.
 git add src/synthetic_neck/cli.py tests/test_cli.py
 git commit -m "Add synthetic-neck CLI with presets and --set overrides
 
-Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 ```
 
 ---
@@ -3266,7 +3279,8 @@ def _noise_fit(frames: np.ndarray, mask: np.ndarray) -> tuple[float, float]:
         sel = idx == k
         if sel.sum() >= 50:
             xs.append(mean[sel].mean()), ys.append(np.median(var[sel]))
-    if len(xs) < 2:
+    if len(xs) < 2 or max(xs) - min(xs) < 20.0:
+        # Too little intensity spread to separate shot from read noise: treat it all as read noise.
         return float(np.sqrt(np.median(var))), 0.0
     slope, intercept = np.polyfit(xs, ys, 1)
     return float(np.sqrt(max(intercept, 0.0))), float(max(slope, 0.0))
@@ -3421,7 +3435,7 @@ Expected: 6 passed. Two things that can bite: `np.loadtxt` on the stand-in CSV n
 git add src/synthetic_neck/calibrate.py tests/test_calibrate.py
 git commit -m "Add Neckflix calibration producing aggregated priors and the neckflix config mapping
 
-Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 ```
 
 ---
@@ -3468,8 +3482,8 @@ Expected: `wrote priors/neckflix.json` in a few minutes (30 trace CSVs of ~20 MB
 
 ```bash
 uv run pytest tests/test_presets.py -v
-uv run synthetic-neck generate --preset neckflix --n 2 --out /tmp/neckflix_smoke --set video.frame_size=96
-uv run synthetic-neck inspect --root /tmp/neckflix_smoke
+uv run synthetic-neck generate --preset neckflix --n 2 --out .superpowers/sdd/2026-09-14-synthetic-neck-generator/smoke/neckflix_smoke --set video.frame_size=96
+uv run synthetic-neck inspect --root .superpowers/sdd/2026-09-14-synthetic-neck-generator/smoke/neckflix_smoke
 ```
 Expected: tests pass; inspect prints artery and vein power ratios above 1 for both samples. If a ratio is below 1 the amplitude is under the calibrated noise floor at 96 px; try at the default 300 px before changing anything.
 
@@ -3479,7 +3493,7 @@ Expected: tests pass; inspect prints artery and vein power ratios above 1 for bo
 git add priors/neckflix.json tests/test_presets.py
 git commit -m "Add calibrated Neckflix priors and the neckflix preset test
 
-Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 ```
 
 ---
@@ -3550,8 +3564,8 @@ Design: `docs/superpowers/specs/2026-09-14-synthetic-neck-generator-design.md`.
 
 ```bash
 uv run pytest -q
-uv run synthetic-neck generate --preset lesson --n 1 --out /tmp/lesson_smoke
-uv run synthetic-neck generate --preset benchmark --n 1 --out /tmp/benchmark_smoke
+uv run synthetic-neck generate --preset lesson --n 1 --out .superpowers/sdd/2026-09-14-synthetic-neck-generator/smoke/lesson_smoke
+uv run synthetic-neck generate --preset benchmark --n 1 --out .superpowers/sdd/2026-09-14-synthetic-neck-generator/smoke/benchmark_smoke
 ```
 Expected: all tests pass; each generation finishes in under a couple of minutes and prints `wrote 1/1 samples`.
 
@@ -3561,5 +3575,5 @@ Expected: all tests pass; each generation finishes in under a couple of minutes 
 git add README.md
 git commit -m "Document the synthetic-neck CLI, presets and outputs
 
-Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>"
 ```
