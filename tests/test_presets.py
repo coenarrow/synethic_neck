@@ -41,3 +41,18 @@ def test_neckflix_without_priors_points_at_calibrate(tmp_path):
 def test_monk_table_is_monotonic_in_brightness():
     lum = [0.299 * r + 0.587 * g + 0.114 * b for r, g, b in MONK_SKIN_RGB]
     assert len(MONK_SKIN_RGB) == 10 and all(a > b for a, b in zip(lum, lum[1:]))
+
+
+def test_checked_in_neckflix_priors_load_and_validate():
+    from synthetic_neck.presets import DEFAULT_PRIORS
+    if not DEFAULT_PRIORS.exists():
+        pytest.skip("priors/neckflix.json not generated yet")
+    cfg = neckflix()
+    validate(cfg)
+    for seed in range(50):
+        p = sample(cfg, np.random.default_rng(seed))
+        assert p.geometry.vein_visible_fraction >= 0.4
+        assert 0.5 <= p.pulse.amplitude_levels <= 2.0
+        assert p.appearance.monk_tone in range(1, 11)
+    text = DEFAULT_PRIORS.read_text()
+    assert "Recording_Directory" not in text and "P0" not in text
