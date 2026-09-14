@@ -58,6 +58,33 @@ def vessel_power_ratio(power: dict[str, np.ndarray], ids: np.ndarray) -> dict[st
     return out
 
 
+def cardiac_snr(series: np.ndarray, fps: float, hr_hz: float) -> float:
+    """Cardiac signal-to-noise of a 1-D series: the mean over HR, 2xHR and 3xHR of the peak Hann-windowed
+    rFFT power within ±1 bin, divided by the median bin power in 5-9 Hz (the series' own noise floor).
+    Harmonics matter because the venous pulse carries most of its cardiac energy at 2xHR."""
+    x = np.asarray(series, dtype=np.float64)
+    x = x - x.mean()
+    p = np.abs(np.fft.rfft(x * np.hanning(len(x)))) ** 2
+    f = np.fft.rfftfreq(len(x), 1 / fps)
+    peaks = []
+    for h in (1, 2, 3):
+        k = int(np.argmin(np.abs(f - h * hr_hz)))
+        peaks.append(p[max(k - 1, 0):k + 2].max())
+    return float(np.mean(peaks) / np.median(p[(f >= 5.0) & (f <= 9.0)]))
+
+
+def vessel_snr(sample_dir: Path) -> dict[str, tuple[float, float]]:
+    """(artery, vein) cardiac SNR per channel, from each vessel mask's per-frame mean signal."""
+    meta = json.loads((sample_dir / "metadata.json").read_text())
+    fps, hr_hz = meta["fps"], meta["params"]["trace"]["heart_rate_bpm"] / 60.0
+    ids = np.load(sample_dir / "vessel_ids.npy")
+    out = {}
+    for name, v in load_channels(sample_dir).items():
+        out[name] = (cardiac_snr(v[:, ids == 1].mean(1), fps, hr_hz),
+                     cardiac_snr(v[:, ids == 2].mean(1), fps, hr_hz))
+    return out
+
+
 def plot_maps(sample_dir: Path, out_path: Path | None = None) -> Path:
     import matplotlib
     matplotlib.use("Agg")
