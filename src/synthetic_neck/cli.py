@@ -66,7 +66,7 @@ def main(argv: list[str] | None = None) -> int:
             run_calibration(args.root, args.out, n_recordings=args.n_recordings, seed=args.seed)
             print(f"wrote {args.out}")
             return 0
-    except (ConfigError, FileNotFoundError, KeyError, RuntimeError) as e:
+    except (ConfigError, FileNotFoundError, KeyError, RuntimeError, ValueError) as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
     return 0

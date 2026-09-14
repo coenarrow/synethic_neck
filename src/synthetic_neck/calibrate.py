@@ -18,10 +18,12 @@ from . import __version__
 from .config import (AppearanceConfig, Choice, GeneratorConfig, GeometryConfig, IlluminationConfig,
                      PulseConfig, Range, SensorConfig, StreamsConfig, TraceConfig, validate)
 from .render.camera import gaussian_blur
+from .traces import CVP_AMPLITUDE_FIELDS, CVP_WAVES
 from .video import FORMATS
 
 PRIORS_SCHEMA_VERSION = 1
 QUANTILES = {"p05": 5, "p25": 25, "p50": 50, "p75": 75, "p95": 95}
+TRACE_TIME, TRACE_CVP, TRACE_ECG = "Time (s)", "CVP (mmHg)", "ECG (mV)"
 
 
 # --------------------------------------------------------------------------- helpers
@@ -137,10 +139,26 @@ def _decimate(x: np.ndarray, factor: int) -> np.ndarray:
     return x[:n].reshape(-1, factor).mean(1)
 
 
+def fit_cvp_waves(beat: np.ndarray, tb: np.ndarray, rr_s: float) -> dict[str, float]:
+    """Least-squares amplitudes (mmHg, clamped >= 0) of the generator's a/c/x/v/y waves in a beat-averaged
+    CVP template. Neighbouring beats (±1, ±2 mean RR) share the amplitudes, so waves that overlap from
+    adjacent beats at fast heart rates are modelled instead of misattributed."""
+    cols = [sum(sign * np.exp(-0.5 * ((tb - k * rr_s - centre) / width) ** 2) for k in (-2, -1, 0, 1, 2))
+            for _, centre, width, sign in CVP_WAVES]
+    design = np.column_stack(cols + [np.ones_like(tb)])
+    coef, *_ = np.linalg.lstsq(design, beat, rcond=None)
+    return {CVP_AMPLITUDE_FIELDS[name]: float(max(coef[i], 0.0)) for i, (name, *_w) in enumerate(CVP_WAVES)}
+
+
 def waveform_priors_for_recording(trace_csv: Path) -> dict:
     """CVP morphology and rhythm from one 'Time (s),CVP (mmHg),ECG (mV)' file."""
-    data = np.loadtxt(trace_csv, delimiter=",", skiprows=1)
-    t, cvp, ecg = data.T
+    with open(trace_csv, newline="") as f:
+        header = [h.strip() for h in f.readline().split(",")]
+    missing = [c for c in (TRACE_TIME, TRACE_CVP, TRACE_ECG) if c not in header]
+    if missing:
+        raise ValueError(f"{trace_csv} lacks columns {missing}")
+    data = np.loadtxt(trace_csv, delimiter=",", skiprows=1, ndmin=2)
+    t, cvp, ecg = (data[:, header.index(c)] for c in (TRACE_TIME, TRACE_CVP, TRACE_ECG))
     fs = 1.0 / float(np.median(np.diff(t)))
     peaks = detect_r_peaks(ecg, fs)
     rr = np.diff(peaks) / fs
@@ -154,12 +172,12 @@ def waveform_priors_for_recording(trace_csv: Path) -> dict:
     peaks_d = peaks // factor
     pre, post = int(0.3 * fs_d), int(0.7 * fs_d)
     beats = [cvp_d[p - pre:p + post] for p in peaks_d if p - pre >= 0 and p + post <= len(cvp_d)]
+    if not beats:
+        raise ValueError(f"no complete beat windows in {trace_csv}")
     beat = np.mean(beats, axis=0)
     beat = beat - beat.mean()
     tb = (np.arange(len(beat)) - pre) / fs_d
-    win = lambda lo, hi: beat[(tb >= lo) & (tb <= hi)]
-    a, c = win(-0.20, 0.0).max(), win(0.02, 0.12).max()
-    x, v, y = win(0.10, 0.30).min(), win(0.25, 0.50).max(), win(0.40, 0.65).min()
+    waves = fit_cvp_waves(beat, tb, float(rr.mean()))
 
     resp = _bandpass(cvp_d, fs_d, 0.1, 0.5)
     return {
@@ -167,11 +185,7 @@ def waveform_priors_for_recording(trace_csv: Path) -> dict:
         "hr_variability": float(rr.std() / rr.mean()),
         "cvp_mean_mmhg": float(cvp.mean()),
         "cvp_pulse_pressure_mmhg": float(np.percentile(cvp_d, 95) - np.percentile(cvp_d, 5)),
-        "a_wave_mmhg": float(max(a, 0.0)),
-        "c_wave_mmhg": float(max(c, 0.0)),
-        "x_descent_mmhg": float(max(-x, 0.0)),
-        "v_wave_mmhg": float(max(v, 0.0)),
-        "y_descent_mmhg": float(max(-y, 0.0)),
+        **waves,
         "resp_cvp_swing_mmhg": float(np.sqrt(2) * resp.std()),
         "n_beats": int(len(rr)),
     }
@@ -295,17 +309,27 @@ def run_calibration(root: Path, out: Path, n_recordings: int = 30, seed: int = 0
     if not usable:
         raise FileNotFoundError(f"no usable recordings under {root}")
     rng = np.random.default_rng(seed)
-    pick = [usable[i] for i in sorted(rng.choice(len(usable), size=min(n_recordings, len(usable)), replace=False))]
-    wave, look, monks = [], [], []
-    for r in pick:
+    order = [usable[i] for i in rng.permutation(len(usable))]
+    wave, look, monks, skipped = [], [], [], 0
+    for r in order:
+        if len(wave) == n_recordings:
+            break
         d = root / "data" / r["Recording_Directory"]
-        wave.append(waveform_priors_for_recording(d / "trace_data.csv"))
-        look.append(appearance_priors_for_recording(d))
+        try:
+            w = waveform_priors_for_recording(d / "trace_data.csv")
+            a = appearance_priors_for_recording(d)
+        except (ValueError, subprocess.CalledProcessError):
+            skipped += 1
+            continue
+        wave.append(w)
+        look.append(a)
         monks.append(monk_of(r))
+    if not wave:
+        raise ValueError(f"no usable recording under {root} could be calibrated ({skipped} skipped)")
     priors = {
         "schema_version": PRIORS_SCHEMA_VERSION,
         "provenance": {"created": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "tool_version": __version__,
-                       "n_rows": len(rows), "n_recordings": len(pick), "seed": seed},
+                       "n_rows": len(rows), "n_recordings": len(wave), "n_skipped": skipped, "seed": seed},
         "population": population_priors(rows),
         "waveform": waveform_priors(wave),
         "appearance": appearance_priors(look, monks),

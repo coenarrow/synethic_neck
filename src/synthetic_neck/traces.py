@@ -37,14 +37,17 @@ def _abp_beat(phase: np.ndarray) -> np.ndarray:
     return systolic + dicrotic + runoff
 
 
+# (name, centre s from R-wave, width s, sign): the CVP beat basis, shared with calibrate.fit_cvp_waves.
+CVP_WAVES = (("a", -0.08, 0.045, +1), ("c", 0.06, 0.03, +1), ("x", 0.17, 0.06, -1),
+             ("v", 0.33, 0.06, +1), ("y", 0.45, 0.05, -1))
+CVP_AMPLITUDE_FIELDS = {"a": "a_wave_mmhg", "c": "c_wave_mmhg", "x": "x_descent_mmhg",
+                        "v": "v_wave_mmhg", "y": "y_descent_mmhg"}
+
+
 def _cvp_beat(phase: np.ndarray, p: TraceParams) -> np.ndarray:
     """CVP waveform (mmHg about zero) vs time since the R-wave: a, c, x, v, y."""
-    a = p.a_wave_mmhg * _gauss(phase, -0.08, 0.045)
-    c = p.c_wave_mmhg * _gauss(phase, 0.06, 0.03)
-    x = -p.x_descent_mmhg * _gauss(phase, 0.17, 0.06)
-    v = p.v_wave_mmhg * _gauss(phase, 0.33, 0.06)
-    y = -p.y_descent_mmhg * _gauss(phase, 0.45, 0.05)
-    return a + c + x + v + y
+    return sum(sign * getattr(p, CVP_AMPLITUDE_FIELDS[name]) * _gauss(phase, centre, width)
+               for name, centre, width, sign in CVP_WAVES)
 
 
 def generate_trace(p: TraceParams) -> np.ndarray:

@@ -133,3 +133,55 @@ def test_run_calibration_writes_schema_and_neckflix_config_validates(tmp_path):
     assert cfg.geometry.vein_visible_fraction.lo == 0.4
     assert cfg.appearance.monk_tone is not None and len(cfg.appearance.skin_rgb_by_monk) == 10
     assert cfg.streams.depth_ir_probability == pytest.approx(2 / 3)
+
+
+def _write_trace(path, columns):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    names = list(columns)
+    with path.open("w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(names)
+        for row in zip(*(columns[n] for n in names)):
+            w.writerow([f"{x:.5f}" for x in row])
+
+
+def _synthetic_trace(hr, **waves):
+    fs = 2000.0
+    p = TraceParams(duration_s=20.0, sample_rate_hz=fs, heart_rate_bpm=hr, hr_variability=0.0, cvp_mean_mmhg=8.0,
+                    cvp_noise_mmhg=0.15, resp_cvp_swing_mmhg=1.5, seed=3, **waves)
+    tr = generate_trace(p)
+    t = tr[:, 0]
+    ecg = sum(1000.0 * np.exp(-0.5 * ((t - r0) / 0.01) ** 2) for r0 in np.arange(-2.0, 22.0, 60.0 / hr))
+    return t, tr[:, 2], tr[:, 1], ecg
+
+
+def test_waveform_priors_select_columns_by_name(tmp_path):
+    t, cvp, abp, ecg = _synthetic_trace(70)
+    path = tmp_path / "trace_data.csv"
+    _write_trace(path, {"Time (s)": t, "CVP (mmHg)": cvp, "ABP (mmHg)": abp, "ECG (mV)": ecg})
+    w = waveform_priors_for_recording(path)
+    assert abs(w["heart_rate_bpm"] - 70) < 1 and 7 < w["cvp_mean_mmhg"] < 9
+    bad = tmp_path / "no_ecg.csv"
+    _write_trace(bad, {"Time (s)": t, "CVP (mmHg)": cvp})
+    with pytest.raises(ValueError, match="lacks columns"):
+        waveform_priors_for_recording(bad)
+
+
+def test_waveform_priors_recover_wave_amplitudes_at_fast_heart_rate(tmp_path):
+    truth = dict(a_wave_mmhg=2.5, c_wave_mmhg=1.0, x_descent_mmhg=1.8, v_wave_mmhg=1.0, y_descent_mmhg=1.2)
+    t, cvp, _, ecg = _synthetic_trace(110, **truth)
+    path = tmp_path / "trace_data.csv"
+    _write_trace(path, {"Time (s)": t, "CVP (mmHg)": cvp, "ECG (mV)": ecg})
+    w = waveform_priors_for_recording(path)
+    for k, v in truth.items():
+        assert abs(w[k] - v) < 0.3, (k, w[k], v)
+
+
+@needs_ffmpeg
+def test_run_calibration_skips_unusable_recordings(tmp_path):
+    _write_stand_in_root(tmp_path)
+    bad = tmp_path / "data" / "P003_S01_R1_90_D" / "trace_data.csv"
+    lines = bad.read_text().splitlines()
+    bad.write_text("\n".join(lines[:1001]) + "\n")        # 0.5 s of signal: too few beats
+    priors = run_calibration(tmp_path, tmp_path / "priors.json", n_recordings=3, seed=0)
+    assert priors["provenance"]["n_recordings"] == 2 and priors["provenance"]["n_skipped"] == 1
