@@ -65,4 +65,17 @@ def test_generate_dataset_writes_index_and_reports_failures(tmp_path, monkeypatc
     assert not (tmp_path / "1").exists() and (tmp_path / "2" / "metadata.json").exists()
     idx = json.loads((tmp_path / "dataset.json").read_text())
     assert idx["preset"] == "lesson" and idx["overrides"] == ["video.frame_size=64"] and idx["base_seed"] == 100
-    assert idx["failed"] == [1]
+    assert idx["failed"] == [{"index": 1, "seed": 101}]
+
+
+@needs_ffmpeg
+def test_generate_dataset_parallel_jobs(tmp_path):
+    results = generate_dataset(_small(), tmp_path, n=2, start=1, base_seed=200, preset="lesson",
+                               overrides=[], jobs=2)
+    assert all(e is None for _, e in results)
+    assert (tmp_path / "1" / "metadata.json").exists() and (tmp_path / "2" / "metadata.json").exists()
+    meta1 = json.loads((tmp_path / "1" / "metadata.json").read_text())
+    meta2 = json.loads((tmp_path / "2" / "metadata.json").read_text())
+    assert meta1["seed"] == 201 and meta2["seed"] == 202
+    idx = json.loads((tmp_path / "dataset.json").read_text())
+    assert idx["failed"] == []

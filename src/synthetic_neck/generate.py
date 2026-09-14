@@ -137,10 +137,10 @@ def generate_dataset(config: GeneratorConfig, out_root: Path, n: int, start: int
         "git_commit": _git_commit(),
         "created": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
         "config": config_to_dict(config),
-        "failed": [i for i, e in results if e is not None],
+        "failed": [{"index": i, "seed": base_seed + i} for i, e in results if e is not None],
     }
     (out_root / "dataset.json").write_text(json.dumps(index, indent=2))
     for i, e in results:
         if e is not None:
-            print(f"sample {i} failed: {e!r}", file=sys.stderr)
+            print(f"sample {i} (seed {base_seed + i}) failed: {e!r}", file=sys.stderr)
     return results
