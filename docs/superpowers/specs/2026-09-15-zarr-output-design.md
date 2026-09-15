@@ -1,7 +1,7 @@
 # `generate --zarr` — design
 
 Date: 2026-09-15
-Status: approved in discussion, awaiting written review
+Status: approved; implemented on feat/zarr-output
 
 ## 1. Purpose
 
@@ -87,8 +87,8 @@ Pinned details:
   values near 700 mm surviving exactly while values in `[0, 1)` did not, and
   synthetic depth mixes near and far pixels.
   Timestamps, traces and `vessel_ids` use zarr's defaults.
-- **Participant type.** A non-string `participant` is refused at write time,
-  as the cachers do.
+- **Participant type.** `participant` is a string by construction: it is the
+  sample directory's name.
 
 ## 4. Generation flow
 
@@ -120,7 +120,7 @@ seeding, the SNR measurement and retry loop, metadata building and
 
 | Module | Holds |
 | --- | --- |
-| `folder_store.py` (new) | `FolderSink`: today's `_render` file handling, **moved, not rewritten**. It writes `trace.csv` and renders from the CSV read back, as now, and handles the temporary MKVs and mux, `gray_video.mkv`, `vessel_ids.npy` and `metadata.json`. It is the only caller of `require_ffmpeg()`. |
+| `folder_store.py` (new) | `FolderSink`: today's `_render` file handling, **moved, not rewritten**. It writes `trace.csv` and renders from the CSV read back, as now, and handles the temporary MKVs and mux, `gray_video.mkv`, `vessel_ids.npy` and `metadata.json`. `FolderSink` checks for ffmpeg per sample (`begin` calls `require_ffmpeg()`); `generate_dataset` also checks once up front, in folder mode only. |
 | `zarr_store.py` (new) | `ZarrSink` and the store-writing helpers for section 3. |
 | `generate.py` | Orchestration, as above. |
 | `cli.py` | The `--zarr` flag. |
@@ -139,7 +139,7 @@ seeding, the SNR measurement and retry loop, metadata building and
   `vessel_ids` and the root attrs, removes an existing `{i}.zarr` if there is
   one, and renames `.partial` to `{i}.zarr`. A store the validator or reader
   can see is therefore always complete.
-- **`discard`** removes `.partial`.
+- **`discard`** removes `.partial` and any existing `{i}.zarr`.
 - **Trace source.** The zarr path renders from the in-memory trace and stores
   exactly that trace. Folder mode renders from the 3-decimal CSV, so one seed
   gives very slightly different pixels in the two modes.
@@ -151,8 +151,8 @@ seeding, the SNR measurement and retry loop, metadata building and
 Unchanged in behaviour.
 
 - A sample that raises, or never reaches green SNR 10 in 20 draws, is
-  discarded. In zarr mode that means `discard()` removes `.partial`; in folder
-  mode the sample directory is removed, as now.
+  discarded. In zarr mode that means `discard()` removes `.partial` and any
+  existing `{i}.zarr`; in folder mode the sample directory is removed, as now.
 - The sample is listed under `failed` in `dataset.json`, and the CLI exits 1.
 - Config errors, including an unmappable posture, exit 2 before anything
   renders.

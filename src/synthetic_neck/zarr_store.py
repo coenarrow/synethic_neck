@@ -141,3 +141,4 @@ class ZarrSink:
     def discard(self) -> None:
         self._root = None
         shutil.rmtree(self.partial, ignore_errors=True)
+        shutil.rmtree(self.path, ignore_errors=True)

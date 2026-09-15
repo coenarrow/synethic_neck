@@ -54,10 +54,10 @@ def test_generate_dataset_writes_index_and_reports_failures(tmp_path, monkeypatc
     import synthetic_neck.generate as gen
     real = gen.generate_sample
 
-    def flaky(config, seed, out_dir, preset="custom"):
+    def flaky(config, seed, out_dir, preset="custom", **kw):
         if seed == 101:
             raise RuntimeError("boom")
-        return real(config, seed, out_dir, preset)
+        return real(config, seed, out_dir, preset, **kw)
 
     monkeypatch.setattr(gen, "generate_sample", flaky)
     results = gen.generate_dataset(_small(), tmp_path, n=2, start=1, base_seed=100, preset="lesson",
