@@ -80,8 +80,12 @@ Pinned details:
   `complete`/`resized_to`/`tool_version` bookkeeping (section 5 makes every
   visible store complete), no `--resize` (`video.frame_size` already sets it).
 - **Storage settings** mirror remote-physiology's cacher `writer.py`, so every
-  cache reads alike: video arrays use blosc-zstd level 9 with bitshuffle, a
-  `Delta` filter of the array's dtype, and chunks `(C, min(32, T), H, W)`.
+  cache reads alike: video arrays use blosc-zstd level 9 with bitshuffle and
+  chunks `(C, min(32, T), H, W)`. The integer video arrays (`rgb`, `ir`) also
+  get a `Delta` filter. Float32 `depth` does not: on floats, Delta round-trips
+  exactly or not depending on the values. A zarr 3.3 probe showed depth-like
+  values near 700 mm surviving exactly while values in `[0, 1)` did not, and
+  synthetic depth mixes near and far pixels.
   Timestamps, traces and `vessel_ids` use zarr's defaults.
 - **Participant type.** A non-string `participant` is refused at write time,
   as the cachers do.
@@ -95,11 +99,17 @@ signatures and gain a keyword-only `zarr: bool = False`.
 **Sink interface.** `_render` no longer knows about files. It drives a sink:
 
 ```python
-sink.begin(streams, n_frames, frame_size, fps)  # once per attempt; wipes any previous attempt
-sink.frame(rgb, ir, depth_mm)                   # once per frame; ir and depth_mm are None without IR + depth
-sink.commit(trace, vessel_ids, meta)            # once, after the SNR check passes
-sink.discard()                                  # when the sample fails
+trace = sink.begin(trace, streams, n_frames, frame_size, fps)  # once per attempt; wipes any previous attempt
+sink.frame(rgb, ir, depth_mm)       # once per frame; ir and depth_mm are None without IR + depth
+sink.commit(vessel_ids, meta)       # once, after the SNR check passes
+sink.discard()                      # when the sample fails
 ```
+
+`begin` receives the freshly generated 1 kHz trace and returns the trace to
+render from. `FolderSink` writes `trace.csv` and returns the CSV read back, so
+its pixels match the ground truth as written. `ZarrSink` returns the trace
+unchanged. The sink keeps the trace from `begin`, which is why `commit` does
+not take it.
 
 `rgb` is `(H, W, 3)` uint8, `ir` is `(H, W)` uint8, `depth_mm` is `(H, W)`
 float in mm, straight from `Renderer`. `generate.py` keeps the per-sample
