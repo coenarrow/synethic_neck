@@ -33,6 +33,8 @@ def _parser() -> argparse.ArgumentParser:
     g.add_argument("--start", type=int, default=1)
     g.add_argument("--seed", type=int, default=2026, help="base seed; sample i uses seed+i")
     g.add_argument("--jobs", type=int, default=1)
+    g.add_argument("--zarr", action="store_true",
+                   help="write one cache-contract zarr store per sample ({i}.zarr) instead of the folder layout")
 
     i = sub.add_parser("inspect", help="write fft_maps.png and print vessel power/phase per sample")
     i.add_argument("--root", type=Path, default=Path("data/synthetic_necks"))
@@ -53,7 +55,7 @@ def main(argv: list[str] | None = None) -> int:
             from .generate import generate_dataset
             cfg = build_config(args.preset, args.sets)
             results = generate_dataset(cfg, args.out, n=args.n, start=args.start, base_seed=args.seed,
-                                       preset=args.preset, overrides=args.sets, jobs=args.jobs)
+                                       preset=args.preset, overrides=args.sets, jobs=args.jobs, zarr=args.zarr)
             failed = [i for i, e in results if e is not None]
             print(f"wrote {len(results) - len(failed)}/{len(results)} samples to {args.out}")
             return 1 if failed else 0

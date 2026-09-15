@@ -13,6 +13,7 @@ import numpy as np
 from . import __version__
 from .config import GeneratorConfig, config_to_dict, params_to_dict, sample, validate
 from .folder_store import FolderSink
+from .zarr_store import ZarrSink, check_config
 from .inspect import cardiac_snr
 from .render.camera import DEPTH_UNITS_MM
 from .render.renderer import Renderer
@@ -54,12 +55,16 @@ def _render(params, sink) -> tuple[Renderer, list[str], float, float]:
     return r, streams, cardiac_snr(g_art, fps, hr_hz), cardiac_snr(g_vein, fps, hr_hz)
 
 
-def generate_sample(config: GeneratorConfig, seed: int, out_dir: Path, preset: str = "custom") -> dict:
-    """Render one sample into `out_dir` and return its metadata dict. Guarantees a testable green-channel
-    pulse: both vessels are checked and, if either is under MIN_VISIBLE_SNR, the sample is redrawn from an
-    independent sub-stream of `seed`, up to MAX_VISIBILITY_ATTEMPTS times. On failure nothing is left behind."""
+def generate_sample(config: GeneratorConfig, seed: int, out_dir: Path, preset: str = "custom", *,
+                    zarr: bool = False) -> dict:
+    """Render one sample into `out_dir` (or, with `zarr`, the store `{out_dir}.zarr`) and return its metadata
+    dict. Guarantees a testable green-channel pulse: both vessels are checked and, if either is under
+    MIN_VISIBLE_SNR, the sample is redrawn from an independent sub-stream of `seed`, up to
+    MAX_VISIBILITY_ATTEMPTS times. On failure nothing is left behind."""
     validate(config)
-    sink = FolderSink(out_dir)
+    if zarr:
+        check_config(config)
+    sink = ZarrSink(out_dir) if zarr else FolderSink(out_dir)
     try:
         last = (0.0, 0.0)
         for attempt in range(MAX_VISIBILITY_ATTEMPTS):
@@ -110,9 +115,9 @@ def generate_sample(config: GeneratorConfig, seed: int, out_dir: Path, preset: s
 
 
 def _one(args) -> tuple[int, Exception | None]:
-    config, index, seed, out_dir, preset = args
+    config, index, seed, out_dir, preset, zarr = args
     try:
-        generate_sample(config, seed, out_dir, preset)
+        generate_sample(config, seed, out_dir, preset, zarr=zarr)
         return index, None
     except Exception as e:          # noqa: BLE001 - reported to the caller; the sink already removed its output
         return index, e
@@ -127,13 +132,18 @@ def _git_commit() -> str | None:
 
 
 def generate_dataset(config: GeneratorConfig, out_root: Path, n: int, start: int, base_seed: int,
-                     preset: str, overrides: list[str], jobs: int = 1) -> list[tuple[int, Exception | None]]:
-    """Generate samples start..start+n-1 (seed = base_seed + i) and write dataset.json."""
+                     preset: str, overrides: list[str], jobs: int = 1, *,
+                     zarr: bool = False) -> list[tuple[int, Exception | None]]:
+    """Generate samples start..start+n-1 (seed = base_seed + i) and write dataset.json. With `zarr`, each
+    sample is a store `{i}.zarr` in `out_root` instead of a folder."""
     validate(config)
-    require_ffmpeg()
+    if zarr:
+        check_config(config)
+    else:
+        require_ffmpeg()
     out_root = Path(out_root)
     out_root.mkdir(parents=True, exist_ok=True)
-    jobs_args = [(config, i, base_seed + i, out_root / str(i), preset) for i in range(start, start + n)]
+    jobs_args = [(config, i, base_seed + i, out_root / str(i), preset, zarr) for i in range(start, start + n)]
     if jobs <= 1:
         results = [_one(a) for a in jobs_args]
     else:
@@ -145,6 +155,7 @@ def generate_dataset(config: GeneratorConfig, out_root: Path, n: int, start: int
         "base_seed": base_seed,
         "start": start,
         "n": n,
+        "format": "zarr" if zarr else "folder",
         "version": __version__,
         "git_commit": _git_commit(),
         "created": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
