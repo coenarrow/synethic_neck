@@ -41,11 +41,16 @@ def _gauss(t: np.ndarray, centre: float, width: float) -> np.ndarray:
     return np.exp(-0.5 * ((t - centre) / width) ** 2)
 
 
+def _gate(phase: np.ndarray, onset: float, width: float = 0.03) -> np.ndarray:
+    """Smooth 0 -> 1 switch about `onset`, ~`width` s wide, in place of a hard step."""
+    return 0.5 * (1.0 + np.tanh((phase - onset) / width))
+
+
 def _abp_beat(phase: np.ndarray) -> np.ndarray:
     """Unit-ish central arterial pulse vs time since upstroke: systolic peak, dicrotic wave, run-off."""
     systolic = _gauss(phase, 0.11, 0.045)
     dicrotic = 0.25 * _gauss(phase, 0.33, 0.05)
-    runoff = 0.35 * np.exp(-np.clip(phase - 0.30, 0, None) / 0.35) * (phase > 0.30)
+    runoff = 0.35 * np.exp(-np.clip(phase - 0.30, 0, None) / 0.35) * _gate(phase, 0.30)
     return systolic + dicrotic + runoff
 
 
@@ -54,7 +59,7 @@ def _ppg_beat(phase: np.ndarray) -> np.ndarray:
     a dicrotic hump near 0.40 s and a slow run-off."""
     systolic = _gauss(phase, 0.18, 0.075)
     dicrotic = 0.35 * _gauss(phase, 0.40, 0.09)
-    runoff = 0.30 * np.exp(-np.clip(phase - 0.35, 0, None) / 0.30) * (phase > 0.35)
+    runoff = 0.30 * np.exp(-np.clip(phase - 0.35, 0, None) / 0.30) * _gate(phase, 0.35)
     return systolic + dicrotic + runoff
 
 
