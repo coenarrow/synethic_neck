@@ -25,8 +25,7 @@ class Renderer:
         w_art, _ = tube_fields(g, "artery")
         w_vein, _ = tube_fields(g, "vein")
         self.base = BaseScene(params.appearance, g, params.camera, w_art, w_vein)
-        self.pulse = PulseStage(params.pulse, params.geometry, g, self.pixel_scale_mm, trace,
-                                site_delay_s=params.trace.abp_site_delay_s)
+        self.pulse = PulseStage(params.pulse, params.geometry, g, self.pixel_scale_mm, trace, params.trace)
         self.illumination = IlluminationStage(params.illumination, g.frame_size, self.fps, self.n_frames,
                                               self.base.shading)
         self.sensor = SensorStage(params.sensor, params.camera, params.video.frame_size)
@@ -36,13 +35,15 @@ class Renderer:
 
     def frame(self, i: int, noise: bool = True) -> np.ndarray:
         """RGB uint8 (H, W, 3) at output resolution."""
-        img = self.base.rgb + self.pulse.rgb_mod(self.frame_time(i))
+        t = self.frame_time(i)
+        img = (self.base.rgb + self.pulse.rgb_mod(t)) * self.pulse.resp_gain(t)
         img = self.illumination(img, i)
         return self.sensor.rgb(img, noise=noise)
 
     def ir_frame(self, i: int, noise: bool = True) -> np.ndarray:
         """Near-infrared uint8 (H, W)."""
-        img = self.base.ir + self.pulse.ir_mod(self.frame_time(i))
+        t = self.frame_time(i)
+        img = (self.base.ir + self.pulse.ir_mod(t)) * self.pulse.resp_gain(t)
         img = self.illumination(img, i)
         return self.sensor.ir(img, noise=noise)
 

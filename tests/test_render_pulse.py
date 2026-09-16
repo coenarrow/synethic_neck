@@ -7,9 +7,10 @@ from synthetic_neck.traces import generate_trace
 
 
 def _stage(**geom):
-    tr = generate_trace(TraceParams(heart_rate_bpm=60, hr_variability=0.0))
+    tp = TraceParams(heart_rate_bpm=60, hr_variability=0.0)
+    tr = generate_trace(tp)
     g = VesselGeometry(frame_size=120, angle_deg=90, length_px=80, centre_xy=(60, 60), **geom)
-    return PulseStage(PulseParams(amplitude_levels=10.0, vein_ratio=0.5), GeometryParams(), g, 0.5, tr), g, tr
+    return PulseStage(PulseParams(amplitude_levels=10.0, vein_ratio=0.5), GeometryParams(), g, 0.5, tr, tp), g, tr
 
 
 def test_normalise_maps_to_half_range():
