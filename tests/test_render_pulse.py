@@ -40,7 +40,7 @@ def test_modulation_is_negative_with_pressure_and_scaled_by_amplitude():
     px = np.unravel_index(np.argmax(w), w.shape)
     times = np.arange(300) / 30.0
     green = np.array([st.rgb_mod(t)[px][1] for t in times])
-    abp = np.array([np.interp(t - st.delay_art[px], st.t, tr[:, 1]) for t in times])
+    abp = np.array([np.interp(t - st.delay_art[px] + st.site_delay_s, st.t, tr[:, 1]) for t in times])
     assert np.corrcoef(green, abp)[0, 1] < -0.9
     assert 9 <= np.ptp(green) <= 11
     lift = np.array([st.depth_lift_mm(t)[px] for t in times])

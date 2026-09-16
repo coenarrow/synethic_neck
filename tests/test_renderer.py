@@ -28,8 +28,10 @@ def test_frame_shapes_and_types():
 
 def test_frame_modulation_darkens_with_pressure():
     # Widest separation, narrowest vein: keeps the venous pulse from bleeding into the artery pixel.
+    # Skin and respiratory terms zeroed to isolate the vessel.
     p = _params(**{"video.frame_size": "100", "trace.heart_rate_bpm": "60", "trace.hr_variability": "0",
                    "appearance.texture_sd": "0", "sensor.read_noise_sd": "0", "pulse.amplitude_levels": "10",
+                   "pulse.skin_ratio": "0", "pulse.resp_gain_frac": "0", "pulse.resp_lift_mm": "0",
                    "geometry.separation_mm": "16", "geometry.vein_width_mm": "9"})
     tr = generate_trace(p.trace)
     r = Renderer(p, tr)
@@ -37,7 +39,7 @@ def test_frame_modulation_darkens_with_pressure():
     px = np.unravel_index(np.argmax(w), w.shape)
     green = np.array([r.frame(i, noise=False)[px][1] for i in range(r.n_frames)], dtype=float)
     delay = r.pulse.delay_art[int(px[0] * r.render_geometry.frame_size / 100), int(px[1] * r.render_geometry.frame_size / 100)]
-    abp = np.array([np.interp(r.frame_time(i) - delay, tr[:, 0], tr[:, 1]) for i in range(r.n_frames)])
+    abp = np.array([np.interp(r.frame_time(i) - delay + r.pulse.site_delay_s, tr[:, 0], tr[:, 1]) for i in range(r.n_frames)])
     assert np.corrcoef(green, abp)[0, 1] < -0.9
     assert 7 <= np.ptp(green) <= 13
     ir = np.array([r.ir_frame(i, noise=False)[px] for i in range(r.n_frames)], dtype=float)
