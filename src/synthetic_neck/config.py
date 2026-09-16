@@ -124,6 +124,7 @@ class TraceConfig:
     radial_transit_s: Range = Range(0.02, 0.04)
     radial_amplification: Range = Range(1.05, 1.15)    # brachial -> radial pulse-pressure amplification
     radial_to_finger_s: Range = Range(0.03, 0.08)
+    skin_transit_s: Range = Range(0.02, 0.04)  # carotid -> neck skin capillaries (frame-physiology spec, section 3)
     # Respiration: phase at t = 0 and the RR shortening at end-inspiration (respiratory sinus arrhythmia).
     resp_phase_rad: Range = Range(0.0, 2 * math.pi)
     rsa_fraction: Range = Range(0.02, 0.08)
@@ -179,10 +180,13 @@ class AppearanceConfig:
 class PulseConfig:
     amplitude_levels: Range = Range(7, 12)     # artery, green channel, peak-to-peak
     vein_ratio: Range = Range(0.4, 0.6)        # vein amplitude / artery amplitude
+    skin_ratio: Range = Range(0.1, 0.3)        # skin-wide PPG amplitude / artery amplitude
     channel_gain: tuple[float, float, float] = (0.55, 1.0, 0.7)
     ir_gain: Range = Range(0.35, 0.35)
     artery_lift_mm: Range = Range(0.3, 0.3)
     vein_lift_mm: Range = Range(0.5, 0.5)
+    resp_gain_frac: Range = Range(0.003, 0.010)   # whole-scene brightness swing with breathing, fractional
+    resp_lift_mm: Range = Range(0.5, 1.0)         # whole-frame depth swing with breathing, mm
 
 
 @dataclass(frozen=True)
@@ -274,6 +278,7 @@ class TraceParams:
     radial_transit_s: float = 0.03
     radial_amplification: float = 1.10
     radial_to_finger_s: float = 0.05
+    skin_transit_s: float = 0.03
     resp_phase_rad: float = 0.0
     rsa_fraction: float = 0.05
     r_amplitude_mv: float = 1.0
@@ -361,14 +366,21 @@ class AppearanceParams:
 class PulseParams:
     amplitude_levels: float = 10.0
     vein_ratio: float = 0.5
+    skin_ratio: float = 0.2
     channel_gain: tuple[float, float, float] = (0.55, 1.0, 0.7)
     ir_gain: float = 0.35
     artery_lift_mm: float = 0.3
     vein_lift_mm: float = 0.5
+    resp_gain_frac: float = 0.005
+    resp_lift_mm: float = 0.7
 
     @property
     def vein_amplitude_levels(self) -> float:
         return self.amplitude_levels * self.vein_ratio
+
+    @property
+    def skin_amplitude_levels(self) -> float:
+        return self.amplitude_levels * self.skin_ratio
 
 
 @dataclass(frozen=True)
