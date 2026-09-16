@@ -50,7 +50,8 @@ def vessel_phase_summary(phase: dict[str, np.ndarray], ids: np.ndarray) -> dict[
 
 
 def vessel_power_ratio(power: dict[str, np.ndarray], ids: np.ndarray) -> dict[str, tuple[float, float]]:
-    """(artery/background, vein/background) mean power ratios per channel."""
+    """(artery/skin, vein/skin) mean power ratios per channel: how far each vessel stands out above the
+    pulsing skin around it."""
     out = {}
     for name, pw in power.items():
         bg = pw[ids == 0].mean()
@@ -73,15 +74,15 @@ def cardiac_snr(series: np.ndarray, fps: float, hr_hz: float) -> float:
     return float(np.mean(peaks) / np.median(p[(f >= 5.0) & (f <= 9.0)]))
 
 
-def vessel_snr(sample_dir: Path) -> dict[str, tuple[float, float]]:
-    """(artery, vein) cardiac SNR per channel, from each vessel mask's per-frame mean signal."""
+def vessel_snr(sample_dir: Path) -> dict[str, tuple[float, float, float]]:
+    """(artery, vein, skin) cardiac SNR per channel, from each region mask's per-frame mean signal; the skin is
+    the background mask."""
     meta = json.loads((sample_dir / "metadata.json").read_text())
     fps, hr_hz = meta["fps"], meta["params"]["trace"]["heart_rate_bpm"] / 60.0
     ids = np.load(sample_dir / "vessel_ids.npy")
     out = {}
     for name, v in load_channels(sample_dir).items():
-        out[name] = (cardiac_snr(v[:, ids == 1].mean(1), fps, hr_hz),
-                     cardiac_snr(v[:, ids == 2].mean(1), fps, hr_hz))
+        out[name] = tuple(cardiac_snr(v[:, ids == k].mean(1), fps, hr_hz) for k in (1, 2, 0))
     return out
 
 
@@ -118,5 +119,6 @@ def inspect_root(root: Path, samples: list[str] | None = None) -> None:
         ids = np.load(d / "vessel_ids.npy")
         s = vessel_phase_summary(phase, ids)["G"]
         r = vessel_power_ratio(power, ids)["G"]
-        print(f"{name}: {out.name}  G power artery x{r[0]:.1f} vein x{r[1]:.1f}  "
+        skin = vessel_snr(d)["G"][2]
+        print(f"{name}: {out.name}  G power artery x{r[0]:.1f} vein x{r[1]:.1f} over skin  skin SNR {skin:.0f}  "
               f"phase artery {s[0]:+.2f} vein {s[1]:+.2f} diff {s[2]:+.2f} rad")

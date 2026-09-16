@@ -35,30 +35,33 @@ def _attempt_rng(seed: int, attempt: int) -> np.random.Generator:
     return np.random.default_rng(seed if attempt == 0 else np.random.SeedSequence([seed, attempt]))
 
 
-def _render(params, sink) -> tuple[Renderer, list[str], float, float]:
-    """Render every stream in one pass into `sink`; return (renderer, streams, green artery SNR, green vein SNR)."""
+def _render(params, sink) -> tuple[Renderer, list[str], float, float, float]:
+    """Render every stream in one pass into `sink`; return (renderer, streams, green artery SNR, green vein SNR,
+    green skin SNR), the skin being the background mask."""
     has_di = params.streams.has_depth_ir
     streams = ["rgb", "ir", "depth"] if has_di else ["rgb"]
     fps = params.video.fps
     # The sink decides which trace the video is rendered from (FolderSink: the CSV read back off disk).
     trace = sink.begin(generate_trace(params.trace), streams, params.video.n_frames, params.video.frame_size, fps)
     r = Renderer(params, trace)
-    art_mask, vein_mask = r.ids == 1, r.ids == 2
-    g_art, g_vein = np.empty(r.n_frames), np.empty(r.n_frames)
+    masks = (r.ids == 1, r.ids == 2, r.ids == 0)                 # artery, vein, skin
+    means = np.empty((3, r.n_frames))
     for i in range(r.n_frames):
         rgb = r.frame(i)
         g = rgb[..., 1].astype(np.float64)
-        g_art[i], g_vein[i] = g[art_mask].mean(), g[vein_mask].mean()
+        for k, mask in enumerate(masks):
+            means[k, i] = g[mask].mean()
         # Arguments evaluate left to right, keeping the sensor noise draws in rgb -> ir -> depth order.
         sink.frame(rgb, r.ir_frame(i) if has_di else None, r.depth_frame(i) if has_di else None)
     hr_hz = params.trace.heart_rate_bpm / 60.0
-    return r, streams, cardiac_snr(g_art, fps, hr_hz), cardiac_snr(g_vein, fps, hr_hz)
+    artery_snr, vein_snr, skin_snr = (cardiac_snr(m, fps, hr_hz) for m in means)
+    return r, streams, artery_snr, vein_snr, skin_snr
 
 
 def generate_sample(config: GeneratorConfig, seed: int, out_dir: Path, preset: str = "custom", *,
                     zarr: bool = False) -> dict:
     """Render one sample into `out_dir` (or, with `zarr`, the store `{out_dir}.zarr`) and return its metadata
-    dict. Guarantees a testable green-channel pulse: both vessels are checked and, if either is under
+    dict. Guarantees a testable green-channel pulse: both vessels and the skin are checked and, if any is under
     MIN_VISIBLE_SNR, the sample is redrawn from an independent sub-stream of `seed`, up to
     MAX_VISIBILITY_ATTEMPTS times. On failure nothing is left behind."""
     validate(config)
@@ -66,16 +69,17 @@ def generate_sample(config: GeneratorConfig, seed: int, out_dir: Path, preset: s
         check_config(config)
     sink = ZarrSink(out_dir) if zarr else FolderSink(out_dir)
     try:
-        last = (0.0, 0.0)
+        last = (0.0, 0.0, 0.0)
         for attempt in range(MAX_VISIBILITY_ATTEMPTS):
             params = sample(config, _attempt_rng(seed, attempt))
-            r, streams, artery_snr, vein_snr = _render(params, sink)
-            last = (artery_snr, vein_snr)
-            if artery_snr >= MIN_VISIBLE_SNR and vein_snr >= MIN_VISIBLE_SNR:
+            r, streams, artery_snr, vein_snr, skin_snr = _render(params, sink)
+            last = (artery_snr, vein_snr, skin_snr)
+            if min(last) >= MIN_VISIBLE_SNR:
                 break
         else:
-            raise RuntimeError(f"seed {seed}: no draw reached green vessel SNR {MIN_VISIBLE_SNR} in "
-                               f"{MAX_VISIBILITY_ATTEMPTS} attempts (last artery {last[0]:.1f}, vein {last[1]:.1f})")
+            raise RuntimeError(f"seed {seed}: no draw reached green SNR {MIN_VISIBLE_SNR} in every region in "
+                               f"{MAX_VISIBILITY_ATTEMPTS} attempts (last artery {last[0]:.1f}, vein {last[1]:.1f}, "
+                               f"skin {last[2]:.1f})")
 
         g, cam, pulse = r.geometry, params.camera, r.pulse
         meta = {
@@ -104,12 +108,14 @@ def generate_sample(config: GeneratorConfig, seed: int, out_dir: Path, preset: s
                 "abp_site_delay_s": params.trace.abp_site_delay_s,
                 "r_to_abp_foot_s": params.trace.r_to_abp_foot_s,
                 "r_to_ppg_foot_s": params.trace.r_to_ppg_foot_s,
+                "r_to_skin_foot_s": pulse.r_to_skin_foot_s,
+                "skin_lead_s": pulse.skin_lead_s,
             },
             "rgbid_streams": {str(i): s for i, s in enumerate(streams)},
             "depth_units_mm": DEPTH_UNITS_MM,
             "vessel_ids": {"file": "vessel_ids.npy", "0": "background", "1": "artery", "2": "vein"},
             "visibility": {"channel": "G", "min_snr": MIN_VISIBLE_SNR, "attempts": attempt + 1,
-                           "artery_snr": artery_snr, "vein_snr": vein_snr},
+                           "artery_snr": artery_snr, "vein_snr": vein_snr, "skin_snr": skin_snr},
         }
         sink.commit(r.ids, meta)
     except BaseException:
