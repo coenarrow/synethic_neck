@@ -54,12 +54,12 @@ respiratory sinusoid, so the delays between them are fixed by construction:
 | `ABP` | mmHg | central pulse (systolic peak, dicrotic wave, run-off) delayed to a drawn catheter site, `radial` or `brachial`, recorded as `trace.abp_site`; radial pulse pressure is amplified |
 | `CVP` | mmHg | a, c, x, v, y waves anchored on the R-wave |
 | `ECG` | mV | the McSharry ECGSYN model (McSharry, Clifford, Tarassenko, Smith, *IEEE Trans Biomed Eng* 50(3):289–294, 2003) as its closed-form Gaussian sum, scaled to the drawn R amplitude |
-| `PPG` | arb | finger pulse: broad systolic hump, dicrotic hump, run-off; foot at R + `pep_s` + `finger_transit_s` |
+| `PPG` | arb | finger pulse: broad systolic hump, dicrotic hump, run-off; foot at R + `pep_s` + `brachial_transit_s` + `radial_transit_s` + `radial_to_finger_s` |
 | `RR` | arb | chest excursion in [0, 1], rising on inspiration |
 
 Respiration modulates everything: ABP and CVP fall on inspiration, ECG
 gets baseline wander and R-amplitude modulation, PPG gets baseline wander and
-amplitude modulation, and RR intervals shorten on inspiration. The timing
+amplitude modulation, and beat-to-beat intervals shorten on inspiration. The timing
 fields and their literature sources are tabulated in
 `docs/superpowers/specs/2026-09-16-physiological-traces-design.md`. The
 carotid pixels are rendered from ABP shifted back to central timing.

@@ -70,7 +70,8 @@ reverse, which is the mechanically ventilated pattern). Noise as today.
 **PPG (arb).** A new peripheral beat shape `_ppg_beat(phase)`: a broad
 systolic hump peaking about 0.18 s after the foot, a dicrotic hump near
 0.40 s and a slow exponential run-off. The foot of beat `k` is at
-`r_k + pep_s + finger_transit_s`. The beat sum is mapped to `[0, 1]` by its
+`r_k + pep_s + brachial_transit_s + radial_transit_s + radial_to_finger_s`,
+i.e. the finger is distal to both catheter sites. The beat sum is mapped to `[0, 1]` by its
 min and max, then amplitude-modulated about 0.5 by `(1 + ppg_am_frac x)`,
 baseline-shifted by `ppg_wander_frac x`, plus white noise `ppg_noise`.
 
@@ -81,7 +82,7 @@ under `derived`):
 | --- | --- |
 | `abp_site_delay_s` | `brachial_transit_s` or `brachial_transit_s + radial_transit_s` |
 | `r_to_abp_foot_s` | `pep_s + abp_site_delay_s` |
-| `r_to_ppg_foot_s` | `pep_s + finger_transit_s` |
+| `r_to_ppg_foot_s` | `pep_s + brachial_transit_s + radial_transit_s + radial_to_finger_s` |
 
 ## 4. Timing anchors and their sources
 
@@ -94,7 +95,7 @@ does not calibrate them this pass.
 | `brachial_transit_s` | 0.05–0.09 s | aortic root to brachial artery | ≈0.5 m path at aortic–brachial PWV of 6–10 m/s; textbook value |
 | `radial_transit_s` | 0.02–0.04 s | brachial to radial | brachial–radial PTT 26.8 ± 6.4 ms (Regional variation in PTT in the upper limb, PMC12095889) |
 | `radial_amplification` | 1.05–1.15 | brachial→radial pulse-pressure amplification | 12 ± 11 % (Verbeke et al. 2005, PMID 15911747) |
-| `finger_transit_s` | 0.12–0.20 s | aortic root to finger PPG foot | with `pep_s` gives PAT-to-foot of 0.20–0.32 s, the band reported for resting adults in MIMIC-based PAT studies (e.g. Liang et al. 2019, *J Clin Med* 8(3):337); studies quoting PAT to the PPG *peak* report ≈0.4 s, consistent with a ≈0.18 s crest time |
+| `radial_to_finger_s` | 0.03–0.08 s | radial artery to finger PPG foot | with the other transits gives a PAT-to-foot of 0.18–0.33 s, the band reported for resting adults in MIMIC-based PAT studies (e.g. Liang et al. 2019, *J Clin Med* 8(3):337); studies quoting PAT to the PPG *peak* report ≈0.4 s |
 | `rsa_fraction` | 0.02–0.08 | peak RR shortening on inspiration | RSA of a few percent of RR in resting adults, larger when young (Circulation 94:842, 1996) |
 | `r_amplitude_mv` | 0.8–1.5 mV | R-peak height | lead-II textbook value |
 | `ecg_r_modulation` | 0.03–0.10 | respiratory R-amplitude modulation | ECG-derived-respiration literature: a few to ten percent |
@@ -111,15 +112,20 @@ ECGSYN wave parameters: PhysioNet ECGSYN 1.0.0
 
 Resulting relationships at the defaults: CVP a-wave 80 ms before R; carotid
 upstroke ≈ R + 0.10 s; brachial foot R + 0.13–0.21 s; radial foot
-R + 0.15–0.25 s; finger PPG foot R + 0.20–0.32 s; PPG peak ≈ foot + 0.18 s;
+R + 0.15–0.25 s; finger PPG foot R + 0.18–0.33 s; PPG peak ≈ foot + 0.18 s;
 T-wave peak at 100/360 of the RR interval (≈ R + 0.23 s at 72 bpm).
+
+The beat kernels start rising before their nominal anchor (the systolic
+Gaussian's tail), so the realised foot of each summed shape sits about
+40–60 ms ahead of the nominal R-to-foot values above; the same offset
+applies to both ABP and PPG, so their ordering and gap are unaffected.
 
 ## 5. Components
 
 | Module | Change |
 | --- | --- |
 | `config.py` | `TraceConfig` gains the fields of section 4; `abp_upstroke_delay_s` is renamed `pep_s`. `TraceParams` gains the matching scalars, `abp_site: str`, and the three derived properties. `sample()` is unchanged: it draws every `TraceConfig` field by name. |
-| `traces.py` | `TRACE_COLUMNS` becomes six names. `beat_onsets` takes the respiratory phase. `ECG_WAVES` module constant with the McSharry citation; `_ecg_beat`, `_ppg_beat` beside `_abp_beat`, `_cvp_beat`. CSV writer/reader carry six columns (Time 4 dp, ABP and CVP 3 dp, ECG, PPG and RR 4 dp). |
+| `traces.py` | `TRACE_COLUMNS` becomes six names. `beat_onsets` evaluates the respiratory waveform at each beat. `ECG_WAVES` module constant with the McSharry citation; `_ecg_beat`, `_ppg_beat` beside `_abp_beat`, `_cvp_beat`. CSV writer/reader carry six columns (Time 4 dp, ABP and CVP 3 dp, ECG, PPG and RR 4 dp). |
 | `render/pulse.py` | `PulseStage` takes `site_delay_s` and interpolates the artery at `time_s − delay_art + site_delay_s`. Nothing else in `render/` changes. |
 | `render/renderer.py` | Passes `params.trace.abp_site_delay_s` to `PulseStage`. |
 | `zarr_store.py` | `TRACE_COLUMNS = {abp: 1, cvp: 2, ecg: 3, ppg: 4, rr: 5}`, `TRACE_UNITS` adds `ecg: "mV"`, `ppg: "arb"`, `rr: "arb"`; root attr `abp_site` from `params["trace"]["abp_site"]`. |
@@ -158,7 +164,7 @@ literals) and not run; they are listed in the summary.
    a 5 s window of all six signals, R-wave times marked, to a PNG. The check:
    CVP a-wave before R, carotid-timed ABP central upstroke after R, brachial
    then radial foot order and gaps, PPG foot after the ABP foot, T-wave
-   before the ABP foot, heart rate visibly faster on inspiration against
+   peak after the ABP foot, heart rate visibly faster on inspiration against
    `rr`, ABP and CVP dipping together on inspiration.
 2. **Validator.** From the remote-physiology root:
 

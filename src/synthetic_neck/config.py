@@ -117,12 +117,13 @@ class TraceConfig:
     cvp_noise_mmhg: Range = Range(0.15, 0.15)
     posture_deg: Choice = Choice((0.0, 45.0, 90.0))
     # Timing (s): R-wave -> aortic valve opening, then transit to each measurement site. Sources: spec section 4.
+    # pep, site, brachial transit, radial transit, radial amplification, radial->finger.
     pep_s: Range = Range(0.08, 0.12)
     abp_site: Choice = Choice(("radial", "brachial"))
     brachial_transit_s: Range = Range(0.05, 0.09)
     radial_transit_s: Range = Range(0.02, 0.04)
     radial_amplification: Range = Range(1.05, 1.15)    # brachial -> radial pulse-pressure amplification
-    finger_transit_s: Range = Range(0.12, 0.20)
+    radial_to_finger_s: Range = Range(0.03, 0.08)
     # Respiration: phase at t = 0 and the RR shortening at end-inspiration (respiratory sinus arrhythmia).
     resp_phase_rad: Range = Range(0.0, 2 * math.pi)
     rsa_fraction: Range = Range(0.02, 0.08)
@@ -272,7 +273,7 @@ class TraceParams:
     brachial_transit_s: float = 0.07
     radial_transit_s: float = 0.03
     radial_amplification: float = 1.10
-    finger_transit_s: float = 0.16
+    radial_to_finger_s: float = 0.05
     resp_phase_rad: float = 0.0
     rsa_fraction: float = 0.05
     r_amplitude_mv: float = 1.0
@@ -301,8 +302,8 @@ class TraceParams:
 
     @property
     def r_to_ppg_foot_s(self) -> float:
-        """Pulse arrival time: R-wave -> finger PPG foot."""
-        return self.pep_s + self.finger_transit_s
+        """Pulse arrival time: R-wave -> finger PPG foot. The finger is distal to both catheter sites."""
+        return self.pep_s + self.brachial_transit_s + self.radial_transit_s + self.radial_to_finger_s
 
 
 @dataclass(frozen=True)
@@ -507,14 +508,6 @@ def validate(config: GeneratorConfig) -> None:
 
 # --------------------------------------------------------------------------- overrides
 
-def _choice_value(text: str):
-    """A Choice value from an override: numeric when it parses as one (posture_deg), else the string (abp_site)."""
-    try:
-        return float(text)
-    except ValueError:
-        return text
-
-
 def _parse_value(hint, text: str):
     origin = typing.get_origin(hint)
     args = typing.get_args(hint)
@@ -530,7 +523,7 @@ def _parse_value(hint, text: str):
         parts = [int(p) for p in text.split(",")]
         return IntRange(parts[0], parts[-1])
     if hint is Choice:
-        return Choice(tuple(_choice_value(p) for p in text.split("|")))
+        return Choice(tuple(float(p) for p in text.split("|")))
     if hint is bool:
         return text.lower() in ("1", "true", "yes")
     if hint is int:
@@ -542,6 +535,15 @@ def _parse_value(hint, text: str):
     if origin is tuple:
         return tuple(float(p) for p in text.split(","))
     raise ConfigError(f"cannot parse override for type {hint}")
+
+
+def _parse_string_choice(current: Choice, text: str) -> Choice:
+    """Override for a Choice whose values are strings (trace.abp_site): every token must be one the field admits."""
+    values = tuple(text.split("|"))
+    unknown = sorted(set(values) - set(current.values))
+    if unknown:
+        raise ConfigError(f"{unknown} not admitted; choose from {sorted(current.values)}")
+    return Choice(values)
 
 
 def apply_override(config: GeneratorConfig, key: str, text: str) -> GeneratorConfig:
@@ -559,8 +561,12 @@ def apply_override(config: GeneratorConfig, key: str, text: str) -> GeneratorCon
     hints = typing.get_type_hints(type(block))
     if field_name not in hints:
         raise ConfigError(f"unknown field {key!r}")
+    current = getattr(block, field_name)
     try:
-        value = _parse_value(hints[field_name], text)
+        if isinstance(current, Choice) and all(isinstance(v, str) for v in current.values):
+            value = _parse_string_choice(current, text)
+        else:
+            value = _parse_value(hints[field_name], text)
     except (ValueError, IndexError) as e:
         raise ConfigError(f"cannot parse {text!r} for {key}: {e}") from e
     return replace(config, **{block_name: replace(block, **{field_name: value})})

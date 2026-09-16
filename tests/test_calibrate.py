@@ -37,11 +37,11 @@ def _write_stand_in_root(root):
         d.mkdir()
         fs = 2000.0
         p = TraceParams(duration_s=10.0, sample_rate_hz=fs, heart_rate_bpm=float(r["Average_BPM"]), hr_variability=0.0,
-                        cvp_mean_mmhg=8.0, seed=1)
+                        rsa_fraction=0.0, cvp_mean_mmhg=8.0, seed=1)
         tr = generate_trace(p)
         t = tr[:, 0]
         rr = 60.0 / p.heart_rate_bpm
-        onsets = np.arange(-2.0, 12.0, rr)          # matches beat_onsets with zero variability
+        onsets = np.arange(-2.0, 12.0, rr)          # matches beat_onsets with zero variability and zero RSA
         ecg = sum(1000.0 * np.exp(-0.5 * ((t - r0) / 0.01) ** 2) for r0 in onsets) + 20 * rng.standard_normal(t.shape)
         with (d / "trace_data.csv").open("w", newline="") as f:
             w = csv.writer(f)
@@ -164,8 +164,8 @@ def _write_trace(path, columns):
 
 def _synthetic_trace(hr, **waves):
     fs = 2000.0
-    p = TraceParams(duration_s=20.0, sample_rate_hz=fs, heart_rate_bpm=hr, hr_variability=0.0, cvp_mean_mmhg=8.0,
-                    cvp_noise_mmhg=0.15, resp_cvp_swing_mmhg=1.5, seed=3, **waves)
+    p = TraceParams(duration_s=20.0, sample_rate_hz=fs, heart_rate_bpm=hr, hr_variability=0.0, rsa_fraction=0.0,
+                    cvp_mean_mmhg=8.0, cvp_noise_mmhg=0.15, resp_cvp_swing_mmhg=1.5, seed=3, **waves)
     tr = generate_trace(p)
     t = tr[:, 0]
     ecg = sum(1000.0 * np.exp(-0.5 * ((t - r0) / 0.01) ** 2) for r0 in np.arange(-2.0, 22.0, 60.0 / hr))
@@ -207,8 +207,8 @@ def test_run_calibration_skips_unusable_recordings(tmp_path):
 def test_waveform_priors_ignore_missed_beats(tmp_path):
     hr = 70
     fs = 2000.0
-    p = TraceParams(duration_s=20.0, sample_rate_hz=fs, heart_rate_bpm=hr, hr_variability=0.0, cvp_mean_mmhg=8.0,
-                    cvp_noise_mmhg=0.15, resp_cvp_swing_mmhg=1.5, seed=3)
+    p = TraceParams(duration_s=20.0, sample_rate_hz=fs, heart_rate_bpm=hr, hr_variability=0.0, rsa_fraction=0.0,
+                    cvp_mean_mmhg=8.0, cvp_noise_mmhg=0.15, resp_cvp_swing_mmhg=1.5, seed=3)
     tr = generate_trace(p)
     t, cvp = tr[:, 0], tr[:, 2]
     onsets = list(np.arange(-2.0, 22.0, 60.0 / hr))
