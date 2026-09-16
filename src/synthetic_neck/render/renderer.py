@@ -25,7 +25,8 @@ class Renderer:
         w_art, _ = tube_fields(g, "artery")
         w_vein, _ = tube_fields(g, "vein")
         self.base = BaseScene(params.appearance, g, params.camera, w_art, w_vein)
-        self.pulse = PulseStage(params.pulse, params.geometry, g, self.pixel_scale_mm, trace)
+        self.pulse = PulseStage(params.pulse, params.geometry, g, self.pixel_scale_mm, trace,
+                                site_delay_s=params.trace.abp_site_delay_s)
         self.illumination = IlluminationStage(params.illumination, g.frame_size, self.fps, self.n_frames,
                                               self.base.shading)
         self.sensor = SensorStage(params.sensor, params.camera, params.video.frame_size)

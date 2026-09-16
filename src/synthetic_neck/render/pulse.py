@@ -16,11 +16,14 @@ def normalise(x: np.ndarray) -> np.ndarray:
 
 class PulseStage:
     def __init__(self, pulse: PulseParams, gp: GeometryParams, geometry: VesselGeometry,
-                 pixel_scale_mm: float, trace: np.ndarray):
+                 pixel_scale_mm: float, trace: np.ndarray, site_delay_s: float = 0.0):
         self.p = pulse
         self.t = trace[:, 0]
         self.abp_n = normalise(trace[:, 1])
         self.cvp_n = normalise(trace[:, 2])
+        # The stored ABP is measured at an arm site `site_delay_s` after the aortic root; the carotid pulse is
+        # the same waveform that much earlier, before its own root -> neck propagation (delay_art).
+        self.site_delay_s = float(site_delay_s)
         self.map_art = float(trace[:, 1].mean())
         self.mean_cvp = float(trace[:, 2].mean())
         self.pwv_art = arterial_pwv_m_s(self.map_art)
@@ -35,7 +38,7 @@ class PulseStage:
 
     def pulse_maps(self, time_s: float) -> tuple[np.ndarray, np.ndarray]:
         """Normalised pressure at every pixel of each vessel at `time_s`."""
-        p_art = np.interp(time_s - self.delay_art, self.t, self.abp_n)
+        p_art = np.interp(time_s - self.delay_art + self.site_delay_s, self.t, self.abp_n)
         p_vein = np.interp(time_s - self.delay_vein, self.t, self.cvp_n)
         return p_art, p_vein
 

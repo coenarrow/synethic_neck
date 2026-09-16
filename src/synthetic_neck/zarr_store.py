@@ -1,10 +1,11 @@
 """Per-sample zarr output: one store satisfying remote-physiology's cache contract (docs/cache-contract.md there).
 
-    {i}.zarr                  root attrs: participant, recording, posture, monk_tone, preset, seed, synthetic_neck
+    {i}.zarr                  root attrs: participant, recording, posture, abp_site, monk_tone, preset, seed,
+                              synthetic_neck
     |-- vessel_ids            (H, W) uint8, attrs: labels
     `-- 1/                    attrs: fps
         `-- rgb | ir | depth  video/data (C, T, H, W); timestamps_us/data (T,) int64;
-                              abp/data, cvp/data (T,) float64 with units "mmHg"
+                              abp, cvp (mmHg), ecg (mV), ppg, rr (arb): <trace>/data (T,) float64, attrs units
 
 Design: docs/superpowers/specs/2026-09-15-zarr-output-design.md.
 """
@@ -23,8 +24,8 @@ from .config import ConfigError, GeneratorConfig
 PERSPECTIVE = "1"
 CHUNK_FRAMES = 32
 POSTURE_BY_ANGLE = {0.0: "supine", 45.0: "recumbent", 90.0: "sitting"}   # Neckflix's vocabulary
-TRACE_COLUMNS = {"abp": 1, "cvp": 2}                                     # columns of generate_trace's array
-TRACE_UNITS = {"abp": "mmHg", "cvp": "mmHg"}
+TRACE_COLUMNS = {"abp": 1, "cvp": 2, "ecg": 3, "ppg": 4, "rr": 5}          # columns of generate_trace's array
+TRACE_UNITS = {"abp": "mmHg", "cvp": "mmHg", "ecg": "mV", "ppg": "arb", "rr": "arb"}
 VESSEL_LABELS = {"0": "background", "1": "artery", "2": "vein"}
 MODALITY_FORMAT = {"rgb": (3, np.uint8), "ir": (1, np.uint8), "depth": (1, np.float32)}   # (channels, dtype)
 # Settings of remote-physiology's cachers (dataset/cachers/*/writer.py), so every cache reads alike.
@@ -127,6 +128,7 @@ class ZarrSink:
             "participant": self.name,       # a Path name, so always a string, as the contract requires
             "recording": self.name,
             "posture": POSTURE_BY_ANGLE[float(params["trace"]["posture_deg"])],
+            "abp_site": params["trace"]["abp_site"],
             "monk_tone": params["appearance"]["monk_tone"],
             "preset": meta["preset"],
             "seed": meta["seed"],
