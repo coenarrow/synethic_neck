@@ -7,6 +7,7 @@ trace synthesiser and renderer consume.
 """
 from __future__ import annotations
 
+import math
 import types
 import typing
 from dataclasses import dataclass, fields, is_dataclass, replace
@@ -105,7 +106,6 @@ class TraceConfig:
     diastolic_mmhg: Range = Range(62, 88)
     pulse_pressure_mmhg: Range = Range(35, 60)
     cvp_mean_mmhg: Range = Range(6, 15)
-    abp_upstroke_delay_s: Range = Range(0.08, 0.14)
     a_wave_mmhg: Range = Range(2.5, 2.5)
     c_wave_mmhg: Range = Range(1.0, 1.0)
     x_descent_mmhg: Range = Range(1.8, 1.8)
@@ -116,6 +116,25 @@ class TraceConfig:
     abp_noise_mmhg: Range = Range(0.3, 0.3)
     cvp_noise_mmhg: Range = Range(0.15, 0.15)
     posture_deg: Choice = Choice((0.0, 45.0, 90.0))
+    # Timing (s): R-wave -> aortic valve opening, then transit to each measurement site. Sources: spec section 4.
+    pep_s: Range = Range(0.08, 0.12)
+    abp_site: Choice = Choice(("radial", "brachial"))
+    brachial_transit_s: Range = Range(0.05, 0.09)
+    radial_transit_s: Range = Range(0.02, 0.04)
+    radial_amplification: Range = Range(1.05, 1.15)    # brachial -> radial pulse-pressure amplification
+    finger_transit_s: Range = Range(0.12, 0.20)
+    # Respiration: phase at t = 0 and the RR shortening at end-inspiration (respiratory sinus arrhythmia).
+    resp_phase_rad: Range = Range(0.0, 2 * math.pi)
+    rsa_fraction: Range = Range(0.02, 0.08)
+    # ECG (mV): McSharry ECGSYN morphology scaled to the R-peak; respiratory modulation; noise.
+    r_amplitude_mv: Range = Range(0.8, 1.5)
+    ecg_r_modulation: Range = Range(0.03, 0.10)
+    ecg_wander_mv: Range = Range(0.02, 0.08)
+    ecg_noise_mv: Range = Range(0.005, 0.02)
+    # Finger PPG (arb, one beat spans ~0..1): respiratory amplitude modulation, baseline wander, noise.
+    ppg_am_frac: Range = Range(0.05, 0.15)
+    ppg_wander_frac: Range = Range(0.05, 0.15)
+    ppg_noise: Range = Range(0.005, 0.02)
 
 
 @dataclass(frozen=True)
@@ -238,7 +257,6 @@ class TraceParams:
     systolic_mmhg: float = 120.0
     diastolic_mmhg: float = 78.0
     cvp_mean_mmhg: float = 6.0
-    abp_upstroke_delay_s: float = 0.10
     a_wave_mmhg: float = 2.5
     c_wave_mmhg: float = 1.0
     x_descent_mmhg: float = 1.8
@@ -249,11 +267,42 @@ class TraceParams:
     abp_noise_mmhg: float = 0.3
     cvp_noise_mmhg: float = 0.15
     posture_deg: float = 45.0
+    pep_s: float = 0.10
+    abp_site: str = "brachial"
+    brachial_transit_s: float = 0.07
+    radial_transit_s: float = 0.03
+    radial_amplification: float = 1.10
+    finger_transit_s: float = 0.16
+    resp_phase_rad: float = 0.0
+    rsa_fraction: float = 0.05
+    r_amplitude_mv: float = 1.0
+    ecg_r_modulation: float = 0.05
+    ecg_wander_mv: float = 0.05
+    ecg_noise_mv: float = 0.01
+    ppg_am_frac: float = 0.10
+    ppg_wander_frac: float = 0.10
+    ppg_noise: float = 0.01
     seed: int = 0
 
     @property
     def n_samples(self) -> int:
         return int(round(self.duration_s * self.sample_rate_hz)) + 1
+
+    @property
+    def abp_site_delay_s(self) -> float:
+        """Aortic root -> the stored ABP's catheter site."""
+        if self.abp_site == "radial":
+            return self.brachial_transit_s + self.radial_transit_s
+        return self.brachial_transit_s
+
+    @property
+    def r_to_abp_foot_s(self) -> float:
+        return self.pep_s + self.abp_site_delay_s
+
+    @property
+    def r_to_ppg_foot_s(self) -> float:
+        """Pulse arrival time: R-wave -> finger PPG foot."""
+        return self.pep_s + self.finger_transit_s
 
 
 @dataclass(frozen=True)
@@ -458,6 +507,14 @@ def validate(config: GeneratorConfig) -> None:
 
 # --------------------------------------------------------------------------- overrides
 
+def _choice_value(text: str):
+    """A Choice value from an override: numeric when it parses as one (posture_deg), else the string (abp_site)."""
+    try:
+        return float(text)
+    except ValueError:
+        return text
+
+
 def _parse_value(hint, text: str):
     origin = typing.get_origin(hint)
     args = typing.get_args(hint)
@@ -473,7 +530,7 @@ def _parse_value(hint, text: str):
         parts = [int(p) for p in text.split(",")]
         return IntRange(parts[0], parts[-1])
     if hint is Choice:
-        return Choice(tuple(float(p) for p in text.split("|")))
+        return Choice(tuple(_choice_value(p) for p in text.split("|")))
     if hint is bool:
         return text.lower() in ("1", "true", "yes")
     if hint is int:

@@ -7,8 +7,8 @@ from synthetic_neck.traces import generate_trace, read_trace_csv, write_trace_cs
 def test_trace_shape_and_ranges():
     p = TraceParams(systolic_mmhg=130, diastolic_mmhg=80, cvp_mean_mmhg=6)
     tr = generate_trace(p)
-    assert tr.shape == (10001, 3)
-    t, abp, cvp = tr.T
+    assert tr.shape == (10001, 6)
+    t, abp, cvp = tr.T[:3]
     assert t[0] == 0 and abs(t[-1] - 10.0) < 1e-9
     assert 60 < abp.min() and abp.max() < 145
     assert 2 <= cvp.min() and cvp.max() <= 20
@@ -25,8 +25,8 @@ def test_trace_heart_rate_is_respected():
 
 
 def test_cvp_a_wave_precedes_arterial_upstroke():
-    p = TraceParams(heart_rate_bpm=60, hr_variability=0.0, abp_upstroke_delay_s=0.10)
-    t, abp, cvp = generate_trace(p).T
+    p = TraceParams(heart_rate_bpm=60, hr_variability=0.0, pep_s=0.10)
+    t, abp, cvp = generate_trace(p).T[:3]
     win = (t > 2.5) & (t < 3.5)      # R-wave lands at t=3.0 by construction
     t_abp_peak = t[win][np.argmax(abp[win])]
     pre = (t > t_abp_peak - 0.35) & (t < t_abp_peak - 0.05)
@@ -55,5 +55,5 @@ def test_trace_csv_round_trip(tmp_path):
     tr = generate_trace(TraceParams())
     write_trace_csv(tr, tmp_path / "trace.csv")
     back = read_trace_csv(tmp_path / "trace.csv")
-    assert (tmp_path / "trace.csv").read_text().splitlines()[0] == "Time,ABP,CVP"
+    assert (tmp_path / "trace.csv").read_text().splitlines()[0] == "Time,ABP,CVP,ECG,PPG,RR"
     np.testing.assert_allclose(back, tr, atol=1e-3)
