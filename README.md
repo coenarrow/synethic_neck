@@ -62,14 +62,34 @@ gets baseline wander and R-amplitude modulation, PPG gets baseline wander and
 amplitude modulation, and beat-to-beat intervals shorten on inspiration. The timing
 fields and their literature sources are tabulated in
 `docs/superpowers/specs/2026-09-16-physiological-traces-design.md`. The
-carotid pixels are rendered from ABP shifted back to central timing.
+carotid pixels are rendered from ABP shifted back to central timing (below).
+
+### What the frames carry
+
+Every signal a model is asked to predict has a footprint in the video, in
+the form a real neck video would show it
+(`docs/superpowers/specs/2026-09-16-frame-physiology-design.md`):
+
+| Signal | Region | Mechanism |
+| --- | --- | --- |
+| ABP | carotid mask | ABP shifted back to central timing, propagated along the vessel; darkening in RGB and IR, a depth lift |
+| CVP | jugular mask | CVP propagated along the vessel; darkening in RGB and IR, a depth lift |
+| PPG | every skin pixel, vessels included | the stored finger PPG read `skin_lead_s` earlier, so the neck skin fills after the carotid (`pep_s` + the artery's entry delay + `skin_transit_s`) and before the finger; uniform darkening in RGB and IR at `skin_ratio` times the artery amplitude, no depth lift |
+| RR | whole frame | brighter by `resp_gain_frac` and nearer by `resp_lift_mm` at end-inspiration, no lag |
+| ECG | everywhere | rate only: every term sits on the one cardiac timeline |
+
+The visibility guarantee covers all three regions: a sample is redrawn until
+the green-channel cardiac SNR of the artery, the vein and the skin (the
+background mask) are each at least 10; `metadata.json` records the three
+under `visibility`.
 
 ## Inspect
 
     uv run synthetic-neck inspect --root data/synthetic_necks
 
 Writes `fft_maps.png` per sample and prints artery/vein power at the heart
-rate relative to background.
+rate relative to the surrounding skin, which pulses with the PPG, and the
+skin's own cardiac SNR.
 
 ## Calibrate (needs the Neckflix drive)
 
