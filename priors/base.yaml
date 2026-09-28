@@ -1,0 +1,104 @@
+# Base priors: one file for the whole generator, the traces of trace_generation.md and the frames of frame_rendering.md.
+# A scalar is a fixed value. A [lo, hi] pair is a uniform prior drawn once per sample.
+# A {MEAN, SD, MIN, MAX} mapping is a normal prior, clipped to MIN/MAX where given.
+# Units are in the key names.
+
+DURATION_S: 30.0
+SAMPLE_RATE_HZ: 30.0           # shared by the rendered frames and the ground-truth traces
+
+RESPIRATORY:
+  RATE_BPM: [10.0, 30.0]         # mean breaths per minute
+  RATE_DRIFT_FRAC: [0.0, 0.15]   # sd of the slow wander in rate, as a fraction of the mean rate
+  RATE_DRIFT_TAU_S: [20.0, 60.0] # timescale of that wander (s)
+
+ECG:
+  HEART_RATE_BPM: [40.0, 140.0]
+  HR_VARIABILITY: [0.01, 0.06]   # sd of beat-to-beat RR jitter, as a fraction of the mean RR
+  RSA_FRACTION: [0.02, 0.10]     # RR shortening at end-inspiration, as a fraction of the mean RR
+  MAYER_FRACTION: [0.0, 0.04]    # amplitude of the 0.1 Hz (Mayer) RR oscillation, as a fraction of the mean RR
+  R_AMPLITUDE: [0.6, 1.6]        # R-peak height (arbitrary units; all ECG amplitudes share this scale)
+  AM_FRACTION: [0.02, 0.10]      # respiratory amplitude modulation of the whole beat, as a fraction
+  WANDER: [0.0, 0.10]            # respiratory baseline wander, same units as R_AMPLITUDE
+  NOISE: [0.005, 0.03]           # white noise sd, same units as R_AMPLITUDE
+
+ABP:                                                   # brachial is the reference site; radial is derived from it
+  MAP_MMHG: {MEAN: 90.0, SD: 20.0, MIN: 40.0}          # mean arterial pressure; with PP it meets the ISO 81060-3 bins
+  PULSE_PRESSURE_MMHG: {MEAN: 55.0, SD: 22.0, MIN: 20.0}
+  PRE_EJECTION_S: [0.05, 0.10]                         # R peak to aortic valve opening
+  AORTIC_TO_BRACHIAL_S: [0.06, 0.12]                   # transit time of the pulse to the brachial site
+  BRACHIAL_TO_RADIAL_S: [0.04, 0.10]                   # further transit to the radial site
+  RADIAL_AMPLIFICATION: [1.05, 1.35]                   # factor on pulse pressure at the wrist
+  RESP_SWING_MMHG: [2.0, 8.0]                          # fall in pressure at end-inspiration
+  NOISE_MMHG: [0.2, 1.0]                               # white noise sd
+
+CVP:                                                   # right atrial / central venous catheter pressure
+  MEAN_MMHG: {MEAN: 7.0, SD: 5.0, MIN: 2.0, MAX: 20.0}
+  PULSE_MMHG: [2.0, 8.0]                               # peak-to-trough excursion, a wave to the deeper descent
+  C_TO_A: [0.0, 0.3]                                   # c wave height as a fraction of the a wave; often absent
+  V_TO_A: [0.5, 0.9]                                   # v wave height as a fraction of the a wave
+  X_TO_A: [0.5, 1.0]                                   # x descent depth as a fraction of the a wave
+  Y_TO_A: [0.5, 1.0]                                   # y descent depth as a fraction of the a wave
+  P_TO_A_S: [0.10, 0.16]                               # P wave centre to a wave peak
+  RESP_SWING_MMHG: [0.3, 2.5]                          # fall in pressure at end-inspiration
+  NOISE_MMHG: [0.1, 0.3]                               # white noise sd
+
+PPG:                                                   # finger pulse oximeter pleth, systole up
+  AMPLITUDE: [0.5, 1.5]                                # peak-to-trough pulse height (arbitrary units)
+  RADIAL_TO_FINGER_S: [0.03, 0.08]                     # further transit from the radial site
+  AM_FRACTION: [0.05, 0.30]                            # fall in pulse height at end-inspiration, as a fraction
+  WANDER: [0.0, 0.30]                                  # fall in baseline at end-inspiration, same units as AMPLITUDE
+  NOISE: [0.005, 0.03]                                 # white noise sd, same units as AMPLITUDE
+
+CAMERA:                                                # the Neckflix rig: 90 degree camera, 3840 px wide, a 650 px crop. A smaller delivered
+                                                       # size (e.g. 300 px) is an argument at generation time, not a prior
+  DISTANCE_MM: [500.0, 1000.0]                         # camera to the skin at the frame centre
+  NATIVE_WIDTH_PX: 3840
+  HFOV_DEG: 90.0
+  CROP_PX: 650
+
+GEOMETRY:                                                               # a cylindrical neck with two straight vessels under the skin
+  NECK_CIRCUMFERENCE_CM: {MEAN: 45.0, SD: 5.0, MIN: 30.0, MAX: 60.0}    # Neckflix mid-neck circumference, 5th-95th 37.5-51 cm, rounded and widened (priors/neckflix.json)
+  LENGTH_MM: [40.0, 80.0]                                               # visible vessel segment
+  SEPARATION_MM: [10.0, 16.0]                                           # arc between the two vessel axes along the skin
+  ARTERY_DIAMETER_MM: {MEAN: 6.3, SD: 0.9, MIN: 4.0, MAX: 9.0}          # common carotid, Krejza 2006
+  VEIN_DIAMETER_MM: {MEAN: 11.0, SD: 3.5, MIN: 4.0, MAX: 20.0}          # internal jugular, Solanki 2018 / Sibai 2008
+  ARTERY_DEPTH_MM: {MEAN: 20.0, SD: 4.0, MIN: 8.0, MAX: 35.0}           # skin to anterior wall; deep to the vein
+  VEIN_DEPTH_MM: {MEAN: 15.0, SD: 4.0, MIN: 5.0, MAX: 30.0}             # skin to anterior wall, Sibai 2008
+  PAIR_OFFSET_MM: [-25.0, 25.0]                                         # arc from the frame centre to the midpoint of the pair
+  AXIAL_OFFSET_MM: [-15.0, 15.0]                                        # along the axis from the frame centre to the segment midpoint
+  POSTURE_DEG: [5.0, 85.0]                                              # head-up angle; torso and neck aligned, so the neck lies at this angle above the
+                                                                        # horizontal in the image, mirrored left/right at random. Supine < 30, recumbent < 60, sitting
+
+PROPAGATION:                                                            # traces to the neck
+  AORTIC_TO_CAROTID_S: {MEAN: 0.043, SD: 0.006, MIN: 0.02, MAX: 0.07}   # valve opening to the carotid upstroke, Hasegawa 1991
+  CAROTID_PP_FRACTION: [0.75, 1.0]                                      # carotid pulse pressure over brachial: the inverse amplification, Avolio 2009
+  CAROTID_PWV_M_S: {MEAN: 6.0, SD: 1.5, MIN: 3.0, MAX: 12.0}            # local carotid pulse wave velocity, Yang 2020
+  VENOUS_PWV_M_S: [1.5, 3.0]                                            # venous pulse wave velocity, Ermini 2020
+  ATRIUM_TO_NECK_S: {MEAN: 0.241, SD: 0.175, MIN: 0.04, MAX: 0.60}     # lag of the jugular area behind the catheter CVP, Zamboni 2020
+
+APPEARANCE:                                                                 # what the neck looks like before the pulse
+  MONK_TONE: [1, 10]                                                        # Monk Skin Tone, drawn uniformly; the swatch hex is the skin colour
+  TEXTURE_FRAC: {MEAN: 0.045, SD: 0.015, MIN: 0.01, MAX: 0.10}              # Neckflix texture sd over the skin level
+  AMBIENT: [0.3, 0.9]                                                       # share of the light that is ambient
+  LIGHT_ANGLE_DEG: [-60.0, 60.0]                                            # light direction across the neck, 0 = from the camera
+  IR_LEVEL: {MEAN: 2200.0, SD: 600.0, MIN: 800.0, MAX: 4000.0}              # skin in the raw 16-bit IR stream, Neckflix K1_IR (priors/neckflix.json)
+  BACKGROUND_LEVEL: [20.0, 200.0]                                           # flat colour beside the neck, drawn per channel
+  BACKGROUND_IR_LEVEL: {MEAN: 2000.0, SD: 550.0, MIN: 800.0, MAX: 3500.0}   # non-skin in the same frames: bedding and chest sit near the skin level
+
+DISTENSION:                                                                     # pressure to blood volume under the skin
+  CAROTID_COMPLIANCE_MM2_PER_KPA: {MEAN: 1.0, SD: 0.35, MIN: 0.3, MAX: 2.2}     # lumen area per unit pressure; adults 18-74, Uejima 2020
+  JUGULAR_AREA_STRAIN_PER_MMHG: {MEAN: 0.057, SD: 0.02, MIN: 0.02, MAX: 0.12}   # fractional lumen area per mmHg; beat-to-beat sd of the jugular
+                                                                                # area over the sd of the CVP, Zamboni 2020
+  SKIN_TRANSIT_S: [0.02, 0.06]                                                  # carotid foot to the foot of the skin pulse; assumed
+
+OPTICS:                                                                         # blood to colour, Jacques 2013
+  BLOOD_FRACTION: {MEAN: 0.015, SD: 0.008, MIN: 0.002, MAX: 0.05}               # resting dermal blood volume fraction, 0.2-7 %
+  PULSE_GREEN_FRACTION: {MEAN: 0.0015, SD: 0.0007, MIN: 0.0005, MAX: 0.004}     # peak-to-trough pulse of the green level over the neck skin, as a fraction;
+                                                                                # Neckflix K1_RGB, 130 clear recordings (priors/neckflix.json)
+  REST_SATURATION: [0.6, 0.9]                                                   # oxygen saturation of the resting dermal blood; assumed mixed
+
+SENSOR:                                                                         # what the camera does to the frame
+  BLUR_SIGMA_PX: [0.5, 1.5]                                                     # Gaussian blur on the native 650 px grid; assumed
+  RGB_NOISE: [0.5, 2.0]                                                         # temporal noise sd per channel, 8-bit levels; assumed
+  IR_NOISE: {MEAN: 20.0, SD: 5.0, MIN: 8.0, MAX: 40.0}                          # temporal noise sd of skin in K1_IR, 16-bit units (priors/neckflix.json)
+  DEPTH_NOISE_MM: [0.5, 2.0]                                                    # temporal noise sd of the depth, mm; assumed
