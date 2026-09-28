@@ -17,3 +17,5 @@ wheels/
 data/
 *.zarr/
 *.zarr.partial/
+
+priors/neckflix.json
