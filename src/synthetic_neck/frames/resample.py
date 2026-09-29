@@ -1,8 +1,10 @@
 """Exact area-average resampling between the native grid and the delivered size, for the sensor stage and for the
-texture drawn at native resolution to match the delivered one."""
+texture drawn at native resolution to match the delivered one; and the sensor's whole linear stage, blur then area
+average, as one matrix."""
 from __future__ import annotations
 
 import numpy as np
+from scipy.ndimage import gaussian_filter1d
 
 
 def area_weights(n_in: int, n_out: int) -> np.ndarray:
@@ -45,3 +47,19 @@ def resample_labels(labels: np.ndarray, n_out: int) -> np.ndarray:
         return labels.copy()
     votes = np.stack([area_average((labels == i).astype(np.float64), n_out) for i in ids], axis=-1)
     return ids[np.argmax(votes, axis=-1)].astype(labels.dtype)
+
+
+def blur_weights(n: int, sigma_px: float) -> np.ndarray:
+    """(n, n) matrix of a Gaussian blur along one axis, truncated at 4 sigma with the edges held at their nearest
+    value: column j is scipy's gaussian_filter1d(mode="nearest") response to a unit at j."""
+    if sigma_px <= 0:
+        return np.eye(n)
+    return gaussian_filter1d(np.eye(n), sigma_px, axis=0, mode="nearest")
+
+
+def sensor_matrix(n: int, n_out: int, sigma_px: float) -> np.ndarray:
+    """(n_out, n) matrix M of the sensor's linear stage along one axis, the blur on the native grid followed by the
+    area average to the delivered size; an image x is recorded as M x M^T. Both are separable, so this is exact, and
+    one matrix product per axis is far cheaper than a filter pass on the CPU's BLAS and on a GPU alike."""
+    m = blur_weights(n, sigma_px)
+    return m if n_out == n else area_weights(n, n_out) @ m

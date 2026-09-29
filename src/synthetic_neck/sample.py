@@ -1,8 +1,9 @@
 """One sample: every prior drawn once from one seed, the traces on the padded grid, the scene and its fields.
 
-`draw_sample` is the whole of trace_generation.md and the drawing half of frame_rendering.md; `frame_at` renders and
-records one frame; `stored_traces` gives the five ground-truth traces on the frame clock. The drawing order is fixed,
-so a seed reproduces a sample exactly.
+`draw_sample` is the whole of trace_generation.md and the drawing half of frame_rendering.md; `prepare` moves the
+sample's fields to a device and the Pipeline it returns renders and records batches of frames there; `stored_traces`
+gives the five ground-truth traces on the frame clock. The drawing order is fixed, so a seed reproduces a sample
+exactly.
 """
 from __future__ import annotations
 
@@ -13,14 +14,15 @@ import numpy as np
 
 from .config import Config
 from .frames.appearance import Appearance, BaseFrame, base_frame, draw_appearance
+from .frames.backend import Backend
 from .frames.camera import Camera, draw_camera
 from .frames.distension import Distension, VolumeField, draw_distension, skin_pulse
 from .frames.optics import Optics, draw_optics
 from .frames.propagation import Propagation, PulseField, carotid_pressure, draw_propagation
-from .frames.render import render_frame
+from .frames.render import Renderer
 from .frames.resample import resample_labels
 from .frames.scene import Scene, SceneMaps, draw_scene, scene_maps
-from .frames.sensor import SensedFrame, Sensor, draw_sensor, sense
+from .frames.sensor import Recorder, SensedFrames, Sensor, draw_sensor
 from .traces.abp import abp
 from .traces.cvp import cvp
 from .traces.ecg import ecg, r_wave_times
@@ -166,10 +168,24 @@ def draw_sample(cfg: Config, seed: int, output_px: int | None = None) -> Sample:
                   maps, base, vol, rng)
 
 
-def frame_at(sample: Sample, time_s: float) -> SensedFrame:
-    """Render and record the frame at `time_s`."""
-    f = render_frame(time_s, sample.maps, sample.appearance, sample.base, sample.volume, sample.optics)
-    return sense(f, sample.sensor, sample.output_px, sample.rng)
+@dataclass(frozen=True)
+class Pipeline:
+    """A sample's render and sensor stages on one device."""
+    sample: Sample
+    renderer: Renderer
+    recorder: Recorder
+
+    def frames_at(self, times_s: np.ndarray) -> SensedFrames:
+        """Render and record the frames at `times_s` (B,). The sensor noise continues the sample's stream, so batches
+        must be taken in order for the seed to reproduce the frames."""
+        return self.recorder.sense(self.renderer.frames(times_s), self.sample.rng)
+
+
+def prepare(sample: Sample, backend: Backend | None = None) -> Pipeline:
+    """The sample's fields on the backend's device (numpy when None), ready to render any batch of frames."""
+    backend = backend or Backend.create("cpu")
+    r = Renderer(sample.maps, sample.appearance, sample.base, sample.volume, sample.optics, backend)
+    return Pipeline(sample, r, Recorder(sample.sensor, sample.camera.crop_px, sample.output_px, backend))
 
 
 def stored_traces(sample: Sample) -> dict[str, np.ndarray]:

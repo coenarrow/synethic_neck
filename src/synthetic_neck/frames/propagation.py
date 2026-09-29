@@ -51,7 +51,8 @@ def carotid_pressure(t: np.ndarray, r_times: np.ndarray, resp: np.ndarray, heart
 
 
 class PulseField:
-    """Pressure at every pixel of the frame at any time, for each vessel, from the padded 1000 Hz traces."""
+    """The padded 1000 Hz pressure traces each vessel reads, and the delay of every pixel behind them: at a frame time
+    t a pixel reads the trace at t minus its delay."""
 
     def __init__(self, t: np.ndarray, carotid_mmhg: np.ndarray, cvp_mmhg: np.ndarray, scene: Scene,
                  maps: SceneMaps, prop: Propagation):
@@ -61,9 +62,3 @@ class PulseField:
         axial_m = np.clip(maps.axial_mm, 0.0, scene.length_mm) * 1e-3
         self.artery_delay_s = axial_m / prop.carotid_pwv_m_s
         self.vein_delay_s = prop.atrium_to_neck_s + axial_m / prop.venous_pwv_m_s
-
-    def artery_mmhg(self, time_s: float) -> np.ndarray:
-        return np.interp(time_s - self.artery_delay_s, self.t, self.carotid)
-
-    def vein_mmhg(self, time_s: float) -> np.ndarray:
-        return np.interp(time_s - self.vein_delay_s, self.t, self.cvp)

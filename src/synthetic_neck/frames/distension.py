@@ -68,8 +68,9 @@ def lift_kernel(axis_depth_mm: float, dist_mm: np.ndarray) -> np.ndarray:
 
 
 class VolumeField:
-    """Blood volume changes at every pixel at any time: the lift of the skin over each vessel (mm), the depth of the
-    lifted skin, and the uniform skin pulse. Area changes are about the mean pressure of each trace over the nominal
+    """The per-pixel fields the renderer multiplies by each vessel's lumen area change at a frame time: the lift of
+    the skin (mm per mm^2), the tilt of the surface normal, and the component of the outward normal towards the
+    camera; with the uniform skin pulse. Area changes are about the mean pressure of each trace over the nominal
     duration, so the drawn vessel diameters are the sizes at mean pressure."""
 
     def __init__(self, pulse: PulseField, scene: Scene, maps: SceneMaps, dist: Distension, duration_s: float,
@@ -88,40 +89,9 @@ class VolumeField:
         self.artery_kernel = np.where(maps.on_neck, lift_kernel(self.artery_axis_depth_mm, maps.artery_dist_mm), 0.0)
         self.vein_kernel = np.where(maps.on_neck, lift_kernel(self.vein_axis_depth_mm, maps.vein_dist_mm), 0.0)
         self.normal_z = np.where(maps.on_neck, np.cos(maps.phi), 0.0)   # outward normal towards the camera
-        # d(kernel)/ds along the arc s = r phi, for the tilt of the surface: -h 2 rho sin(phi - phi_v) / (pi d^4)
+        # d(kernel)/ds along the arc s = r phi, for the tilt of the surface: -h 2 rho sin(phi - phi_v) / (pi d^4).
+        # The normal of a surface u(s) is turned by -du/ds, so the tilt is minus the area change times this.
         self.artery_slope = np.where(maps.on_neck, -self.artery_axis_depth_mm * 2 * scene.artery_axis_radius_mm
                                      * np.sin(maps.phi - scene.artery_phi) / (np.pi * maps.artery_dist_mm ** 4), 0.0)
         self.vein_slope = np.where(maps.on_neck, -self.vein_axis_depth_mm * 2 * scene.vein_axis_radius_mm
                                    * np.sin(maps.phi - scene.vein_phi) / (np.pi * maps.vein_dist_mm ** 4), 0.0)
-
-    def artery_area_mm2(self, time_s: float) -> np.ndarray:
-        return self.artery_compliance_mm2_per_mmhg * (self.pulse.artery_mmhg(time_s) - self.artery_mean_mmhg)
-
-    def vein_area_mm2(self, time_s: float) -> np.ndarray:
-        return self.vein_compliance_mm2_per_mmhg * (self.pulse.vein_mmhg(time_s) - self.vein_mean_mmhg)
-
-    def artery_lift_mm(self, time_s: float) -> np.ndarray:
-        return self.artery_area_mm2(time_s) * self.artery_kernel
-
-    def vein_lift_mm(self, time_s: float) -> np.ndarray:
-        return self.vein_area_mm2(time_s) * self.vein_kernel
-
-    def depth_mm(self, time_s: float) -> np.ndarray:
-        """Depth of the lifted skin: the lift is along the outward normal, so the camera sees its component towards
-        it, and a lift brings the skin nearer."""
-        return self.maps.depth_mm - (self.artery_lift_mm(time_s) + self.vein_lift_mm(time_s)) * self.normal_z
-
-    def tilt(self, time_s: float) -> np.ndarray:
-        """Rotation of the outward normal in the cross-section plane (radians, positive towards larger phi) by the
-        slope of the lift along the arc: the normal of a surface u(s) is turned by -du/ds."""
-        return -(self.artery_area_mm2(time_s) * self.artery_slope + self.vein_area_mm2(time_s) * self.vein_slope)
-
-    def skin_pulse(self, time_s: float) -> float:
-        return float(np.interp(time_s, self.pulse.t, self.skin))
-
-
-def quantise_depth(depth_mm: np.ndarray, rng: np.random.Generator) -> np.ndarray:
-    """Depth in integer millimetres as uint16, by stochastic rounding: a value of 700.3 is 701 with probability 0.3 and
-    700 otherwise, so a lift smaller than a millimetre still moves that fraction of the pixels."""
-    d = np.asarray(depth_mm, dtype=np.float64)
-    return np.floor(d + rng.random(d.shape)).clip(0, np.iinfo(np.uint16).max).astype(np.uint16)

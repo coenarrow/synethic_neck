@@ -1,4 +1,5 @@
-"""Generate one sample or a whole dataset: draw, step the frames on the shared clock, and write the store."""
+"""Generate one sample or a whole dataset: draw, render the frames of the shared clock in batches on the chosen
+device, and write the store."""
 from __future__ import annotations
 
 import json
@@ -13,25 +14,33 @@ from tqdm import tqdm
 
 from . import __version__
 from .config import DEFAULT_PRIORS, Config, load
-from .sample import describe, draw_sample, frame_at, stored_traces
-from .store import ZarrSink
+from .frames.backend import Backend
+from .sample import describe, draw_sample, prepare, stored_traces
+from .store import CHUNK_FRAMES, DEFAULT_CLEVEL, ZarrSink, compressor
 
 
 def generate_sample(cfg: Config, seed: int, out_dir: Path, output_px: int | None = None,
-                    priors: str | None = None, progress: bool = True) -> dict:
-    """Draw the sample for `seed`, render its frames and write `{out_dir}.zarr`; return the metadata. On failure
-    nothing is left behind. With `progress`, a tqdm bar over the frames."""
-    sink = ZarrSink(out_dir)
+                    priors: str | None = None, progress: bool = True, device: str = "auto",
+                    batch: int = CHUNK_FRAMES, clevel: int = DEFAULT_CLEVEL) -> dict:
+    """Draw the sample for `seed`, render its frames `batch` at a time on `device` and write `{out_dir}.zarr` at
+    zstd level `clevel`; return the metadata. On failure nothing is left behind. With `progress`, a tqdm bar over the
+    frames."""
+    sink = ZarrSink(out_dir, clevel)
+    backend = Backend.create(device)
     try:
         sample = draw_sample(cfg, seed, output_px)
+        pipe = prepare(sample, backend)
         sink.begin(sample.n_frames, sample.output_px, sample.sample_rate_hz)
-        frames = tqdm(sample.frame_times_s, desc=f"sample {sink.name} frames", unit="frame", leave=False,
+        times = sample.frame_times_s
+        frames = tqdm(total=sample.n_frames, desc=f"sample {sink.name} frames", unit="frame", leave=False,
                       disable=not progress)
-        for t in frames:
-            f = frame_at(sample, float(t))
-            sink.frame(f.rgb, f.ir, f.depth_mm)
+        for start in range(0, sample.n_frames, batch):
+            f = pipe.frames_at(times[start:start + batch])
+            sink.frames(f)
+            frames.update(len(f))
+        frames.close()
         meta = describe(sample)
-        meta["version"], meta["priors"] = __version__, priors
+        meta["version"], meta["priors"], meta["device"], meta["clevel"] = __version__, priors, backend.name, clevel
         sink.commit(stored_traces(sample), sample.labels, sample.neck_mask, meta)
     except BaseException:
         sink.discard()
@@ -40,9 +49,9 @@ def generate_sample(cfg: Config, seed: int, out_dir: Path, output_px: int | None
 
 
 def _one(args) -> tuple[int, Exception | None]:
-    priors_path, index, seed, out_dir, output_px, progress = args
+    priors_path, index, seed, out_dir, output_px, progress, device, batch, clevel = args
     try:
-        generate_sample(load(priors_path), seed, out_dir, output_px, str(priors_path), progress)
+        generate_sample(load(priors_path), seed, out_dir, output_px, str(priors_path), progress, device, batch, clevel)
         return index, None
     except Exception as e:          # noqa: BLE001 - reported to the caller; the sink already removed its output
         return index, e
@@ -58,15 +67,20 @@ def _git_commit() -> str | None:
 
 def generate_dataset(out_root: Path, n: int, start: int = 1, base_seed: int = 2026, jobs: int = 1,
                      output_px: int | None = None, priors_path: Path = DEFAULT_PRIORS,
-                     progress: bool = True) -> list[tuple[int, Exception | None]]:
+                     progress: bool = True, device: str = "auto", batch: int = CHUNK_FRAMES,
+                     clevel: int = DEFAULT_CLEVEL) -> list[tuple[int, Exception | None]]:
     """Generate samples start..start+n-1 (seed = base_seed + i) as `{i}.zarr` in `out_root`, with dataset.json.
-    With `progress`, tqdm bars over the samples and, when `jobs` is 1, the frames of the current sample."""
+    Frames render `batch` at a time on `device` (see Backend.create) and are stored at zstd level `clevel`. With
+    `progress`, tqdm bars over the samples and, when `jobs` is 1, the frames of the current sample."""
     priors_path = Path(priors_path)
     load(priors_path)                                      # fail before any work on a bad priors file
+    backend = Backend.create(device)                       # and on a device that is not there
+    compressor(clevel)                                     # and on a bad compression level
     out_root = Path(out_root)
     out_root.mkdir(parents=True, exist_ok=True)
     # The frame bar is shown only when samples run one at a time; with workers, the samples bar alone.
-    jobs_args = [(priors_path, i, base_seed + i, out_root / str(i), output_px, progress and jobs <= 1) for i in range(start, start + n)]
+    jobs_args = [(priors_path, i, base_seed + i, out_root / str(i), output_px, progress and jobs <= 1, device, batch, clevel)
+                 for i in range(start, start + n)]
     samples = tqdm(total=n, desc="samples", unit="sample", disable=not progress)
     if jobs <= 1:
         results = []
@@ -86,6 +100,7 @@ def generate_dataset(out_root: Path, n: int, start: int = 1, base_seed: int = 20
         "priors": str(priors_path),
         "priors_values": yaml.safe_load(priors_path.read_text()),
         "output_px": output_px,
+        "device": backend.name, "batch": batch, "clevel": clevel,
         "base_seed": base_seed, "start": start, "n": n,
         "version": __version__, "git_commit": _git_commit(),
         "created": time.strftime("%Y-%m-%dT%H:%M:%S%z"),

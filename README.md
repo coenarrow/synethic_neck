@@ -25,20 +25,38 @@ redrawn or hidden.
 
 Requires Python 3.13 and [uv](https://docs.astral.sh/uv/).
 
-    uv sync
+    uv sync                 # CPU only
+    uv sync --extra gpu     # with torch, to render on a GPU (CUDA or Apple MPS)
 
 ## Generate
 
     uv run synthetic-neck generate \
     --n 20 \ # how many samples
     --size 300 \ # resolution of samples (300x300)
-    --jobs 2 \ # for concurrent generation
+    --device auto \ # where frames render: auto, cpu, cuda or mps
+    --compression 5 \ # zstd level of the stored frames, 0 (none) to 9
+    --jobs 2 \ # samples rendered concurrently (CPU)
     --priors priors/base.yaml \ # params for generation
     --seed 2026 # random seed for reproducibility
 
-Sample `i` uses seed `--seed + i` and is reproducible from it. 
+Sample `i` uses seed `--seed + i` and is reproducible from it on a given device; the CPU and a GPU draw different
+sensor noise for the same seed, and agree on everything else to float32 rounding.
 `--size` delivers the frames area-averaged down from the native 650 px crop; without it they are delivered at 650 px.
-To change a prior, copy `priors/base.yaml` and pass the copy with `--priors`.
+`--device auto` takes a GPU when torch finds one, else numpy on the CPU; with a GPU, `--jobs 1` is usually best.
+`--compression` sets the zstd level of the stored frames; the sensor noise keeps them near half their raw size at
+any level, and level 9 writes 18 times slower than the default 5 for 8% less disk.
+Frames render in batches of `--batch` (default 32, the store's chunk). As a guide, a 30 s sample at 650 px takes about
+30 s on one CPU core and 14 s on an Apple M-series GPU, written; at 300 px, 14 s and 6 s.
+To change a prior, copy `priors/base.yaml` and pass the copy with `--priors`. Three files are provided, with identical
+trace priors and different frame-side signal and sensor noise:
+
+- `priors/base.yaml`: the plausible generator. In a single frame the pulse and the lift sit below the noise.
+- `priors/high_snr.yaml`: every frame-side signal and noise value at the geometric midpoint of base and demo, so the
+  pulse and the lift are just perceptible (about two green levels and 2 to 3 mm of lift against sub-level and sub-mm noise).
+- `priors/demo.yaml`: signal far up and noise far down, so both are visible to the eye (about 14 green levels and
+  several mm of lift). Not plausible; for demonstrations and pipeline checks.
+
+`test_plots/snr_priors.py` plots the three side by side from generated datasets.
 
 Each sample is one zarr store `{i}.zarr` in the layout of remote-physiology's cache contract:
 
