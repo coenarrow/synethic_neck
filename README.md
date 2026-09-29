@@ -60,8 +60,9 @@ trace priors and different frame-side signal and sensor noise:
 
 Each sample is one zarr store `{i}.zarr` in the layout of remote-physiology's cache contract:
 
-    {i}.zarr                  root attrs: participant, recording, posture, abp_site, monk_tone, seed,
-                              synthetic_neck (every drawn value and the derived quantities)
+    {i}.zarr                  root attrs: participant, recording, posture, abp_site, skin_tone (Monk 1..10),
+                              neck_circumference_cm, seed, synthetic_neck (every drawn value and the
+                              derived quantities)
     |-- vessel_ids            (H, W) uint8: 0 background, 1 artery, 2 vein
     |-- neck_mask             (H, W) uint8
     `-- 1/                    attrs: fps

@@ -1,6 +1,7 @@
 """Per-sample zarr output: one store in the layout of remote-physiology's cache contract.
 
-    {i}.zarr                  root attrs: participant, recording, posture, abp_site, monk_tone, seed, synthetic_neck
+    {i}.zarr                  root attrs: participant, recording, posture, abp_site, skin_tone (Monk 1..10),
+                              neck_circumference_cm, seed, synthetic_neck
     |-- vessel_ids            (H, W) uint8, attrs: labels (0 background, 1 artery, 2 vein)
     |-- neck_mask             (H, W) uint8, 1 on the neck
     `-- 1/                    attrs: fps
@@ -14,6 +15,7 @@ chunks) and `commit` renames it into place, so a visible store is complete.
 from __future__ import annotations
 
 import shutil
+import time
 from pathlib import Path
 
 import numpy as np
@@ -31,6 +33,7 @@ MODALITY_FORMAT = {"rgb": (3, np.uint8), "ir": (1, np.uint16), "depth": (1, np.u
 # zstd 5 by default: the sensor noise makes the frames barely compressible, so level 9 buys 8% over level 5 at 18
 # times the write time, which at 9 was the whole cost of a sample.
 DEFAULT_CLEVEL = 5
+RENAME_WAIT_S = 10.0
 
 
 def compressor(clevel: int = DEFAULT_CLEVEL) -> BloscCodec:
@@ -38,6 +41,21 @@ def compressor(clevel: int = DEFAULT_CLEVEL) -> BloscCodec:
     if not 0 <= clevel <= 9:
         raise ValueError(f"compression level must be 0..9, got {clevel}")
     return BloscCodec(cname="zstd", clevel=clevel, shuffle="bitshuffle")
+
+
+def rename_when_released(source: Path, target: Path) -> None:
+    """Rename a directory, waiting out RENAME_WAIT_S of PermissionError. Windows refuses the rename while any
+    process has a file inside open, and a virus scanner or indexer opens the files just written for up to a few
+    hundred milliseconds."""
+    deadline = time.monotonic() + RENAME_WAIT_S
+    while True:
+        try:
+            source.rename(target)
+            return
+        except PermissionError:
+            if time.monotonic() > deadline:
+                raise
+            time.sleep(0.02)
 
 
 class ZarrSink:
@@ -93,13 +111,15 @@ class ZarrSink:
         ids = self._root.create_array("vessel_ids", data=np.asarray(labels, dtype=np.uint8))
         ids.attrs["labels"] = VESSEL_LABELS
         self._root.create_array("neck_mask", data=np.asarray(neck_mask, dtype=np.uint8))
+        neck_circumference_cm = 2 * np.pi * meta["scene"]["neck_radius_mm"] / 10.0
         for key, value in {"participant": self.name, "recording": self.name, "posture": meta["posture"],
-                           "abp_site": meta["abp_site"], "monk_tone": meta["appearance"]["monk_tone"],
+                           "abp_site": meta["abp_site"], "skin_tone": meta["appearance"]["monk_tone"],
+                           "neck_circumference_cm": float(neck_circumference_cm),
                            "seed": meta["seed"], "synthetic_neck": meta}.items():
             self._root.attrs[key] = value
         self._root = None
         shutil.rmtree(self.path, ignore_errors=True)
-        self.partial.rename(self.path)
+        rename_when_released(self.partial, self.path)
 
     def discard(self) -> None:
         self._root = None
